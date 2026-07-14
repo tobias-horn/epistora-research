@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Vault"
+  short_description: "Build and acquire an OpenAlex research vault"
+  default_prompt: "Use $research-vault to initialize a research vault, build its OpenAlex paper list, and acquire the finalized sources."

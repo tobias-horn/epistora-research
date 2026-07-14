@@ -1,0 +1,32 @@
+filters:
+  and:
+    - 'file.inFolder("wiki")'
+    - 'file.ext == "md"'
+
+formulas:
+  page: 'file.asLink(if(title, title, file.basename))'
+
+properties:
+  formula.page:
+    displayName: Page
+  kind:
+    displayName: Kind
+  description:
+    displayName: Description
+  sources:
+    displayName: Sources
+  related:
+    displayName: Related
+  file.mtime:
+    displayName: Updated
+
+views:
+  - type: table
+    name: Wiki
+    order:
+      - formula.page
+      - note.kind
+      - note.description
+      - note.sources
+      - note.related
+      - file.mtime

@@ -1,0 +1,38 @@
+filters:
+  and:
+    - 'file.inFolder("sources")'
+    - 'file.ext == "md"'
+
+formulas:
+  source: 'file.asLink(if(title, title, file.basename))'
+
+properties:
+  formula.source:
+    displayName: Source
+  authors:
+    displayName: Authors
+  year:
+    displayName: Year
+  venue:
+    displayName: Venue
+  work_type:
+    displayName: Type
+  study_design:
+    displayName: Study design
+  concepts:
+    displayName: Concepts
+  is_retracted:
+    displayName: Retracted
+
+views:
+  - type: table
+    name: Sources
+    order:
+      - formula.source
+      - note.authors
+      - note.year
+      - note.venue
+      - note.work_type
+      - note.study_design
+      - note.concepts
+      - note.is_retracted

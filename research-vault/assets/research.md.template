@@ -1,0 +1,21 @@
+---
+topic: {{TOPIC_YAML}}
+status: initialized
+---
+
+# Research: {{TOPIC}}
+
+## Research direction
+
+Use this section to record the interpreted question, intended breadth, important dimensions, and any justified exclusions before seeding.
+
+## Initial seeding
+
+- Target: 80–100 unique papers, adjusted when the topic warrants it
+- Status: not started
+- Active search strands:
+- Anchor sources:
+- Coverage gaps:
+- Stopping rationale:
+
+`state/search-log.jsonl` records exact OpenAlex operations, `state/candidates.json` holds discovered and screened works, and `state/queue.json` receives the finalized paper list. Initial seeding selects metadata only; it does not download or ingest papers.
