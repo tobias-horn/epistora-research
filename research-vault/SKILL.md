@@ -1,11 +1,11 @@
 ---
 name: research-vault
-description: Initialize, seed, and acquire ingestible sources for an Obsidian-compatible scientific research vault. Use when Codex needs to create a research second brain, literature vault, source-note collection, or connected concept wiki; discover and screen relevant frontier and foundational OpenAlex papers that have PDF or XML content; or download those sources under a cost cap.
+description: Initialize, seed, acquire, and parse sources for an Obsidian-compatible scientific research vault. Use when Codex needs to create a research second brain, literature vault, source-note collection, or connected concept wiki; discover and screen relevant OpenAlex papers; download every available PDF and XML under a cost cap; or convert imperfect OpenAlex XML and scientific PDFs into clean, provenance-backed Markdown with a custom XML parser and Docling fallback.
 ---
 
 # Research Vault
 
-Create a self-contained vault, build its initial scientific source list, and acquire available source files. Use bundled scripts for filesystem and API operations instead of reproducing them manually.
+Create a self-contained vault, build its initial scientific source list, acquire available source files, and convert retained papers into clean Markdown with provenance. Use bundled scripts for filesystem, API, environment, and parsing operations instead of reproducing them manually.
 
 ## Initialize a vault
 
@@ -58,12 +58,29 @@ Prefer OpenAlex-cached content. When no cached PDF exists, allow only a direct P
 
 Validate PDFs before retaining them. Decompress XML when needed and retain every non-empty response from the OpenAlex XML endpoint, including noncanonical or imperfect TEI.
 
+## Parse papers into clean Markdown
+
+Read `references/parsing.md` completely before installing parser dependencies, parsing papers, or evaluating parser output.
+
+Run one command from the initialized vault:
+
+```bash
+python3 scripts/process_sources.py .
+```
+
+The command creates an ignored vault-local environment, installs the pinned parser dependencies there, and processes `state/queue.json`. Never install Docling or XML dependencies into system Python.
+
+Prefer usable XML because it is much faster and usually has better semantic structure. Invoke Docling when XML is absent, cannot be parsed, is very short, lacks section structure, or appears to contain the wrong paper. Preserve original downloads under `raw/` and write exactly one selected representation per paper to `markdown/<OPENALEX_ID>.md`. Keep checksums, parser versions, routing reasons, warnings, and timing in `state/parsing.json`, not beside the Markdown. Inspect every failed or review-recommended work; never invent missing text or call raw GROBID formula text validated LaTeX.
+
 ## Bundled resources
 
 - `scripts/init_vault.py`: Validate, create, render, verify, and atomically install a vault.
 - `scripts/configure_openalex.py`: Prompt locally and securely store a reusable user-level OpenAlex credential.
 - `scripts/seed_openalex.py`: Deterministically retrieve content-qualified results, log searches and the core phrase, review, label, deduplicate, and write the shortlist.
 - `scripts/acquire_openalex.py`: Refresh shortlist metadata, download OpenAlex-cached content or a direct external OA PDF, and finalize the retained queue under an explicit cost cap.
+- `scripts/process_sources.py`: Create the local parser runtime and run the complete parsing stage.
+- `scripts/parse_sources.py`: Parse imperfect XML, run Docling PDF fallback, choose the clean Markdown variant, and record diagnostics.
 - `references/seeding.md`: Agent workflow, command examples, judgment boundaries, and stopping guidance.
 - `references/acquisition.md`: Acquisition commands, storage contract, cost guardrail, and retry guidance.
+- `references/parsing.md`: Parser behavior, output layout, validation, and recovery guidance.
 - `assets/`: Files copied into each vault. The initializer renders the topic and creates empty seeding state.

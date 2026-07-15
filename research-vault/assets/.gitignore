@@ -1,0 +1,5 @@
+.research-vault/
+*.part
+
+# Downloaded papers should not be committed or redistributed with the vault.
+raw/

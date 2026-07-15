@@ -14,6 +14,12 @@ Use `scripts/seed_openalex.py` to build the initial shortlist. First test the us
 
 After shortlisting, use `scripts/acquire_openalex.py` to plan and download complete metadata plus every available PDF and XML for each paper. Review the plan, set an explicit maximum cost, and use the acquisition `finalize` command to write `state/queue.json` only for papers with at least one validated PDF or downloaded XML. Retain non-empty XML returned by OpenAlex even when its TEI structure is imperfect. If fewer than 80 qualify, add targeted replacements instead of retaining metadata-only papers. Acquisition progress is resumable in `state/acquisition.json`; raw files belong under `raw/works/<OPENALEX_ID>/`. Do not scrape landing pages, bypass access controls, convert full text, or create notes during acquisition.
 
+## Structured parsing
+
+After acquisition is finalized, read `PARSING.md` and run `python3 scripts/process_sources.py .`. It creates an ignored vault-local environment and installs the pinned XML and Docling dependencies there; never install them into system Python. Keep raw XML/PDF immutable. Prefer usable XML and run Docling when XML is missing, broken, very short, structurally empty, or likely belongs to the wrong paper.
+
+Keep the two content layers separate: original files under `raw/works/<OPENALEX_ID>/` and exactly one selected conversion per paper under `markdown/<OPENALEX_ID>.md`. Keep source selection, checksums, parser versions, warnings, and timing in `state/parsing.json`; do not create per-paper artifact bundles. Review every item marked `review_required` and every failure; never invent missing prose, equations, citations, table cells, or image content.
+
 ## Source notes
 
 A source note represents one bibliographic work or report and records what that source contributes to the research topic. Ground it in the raw source, pair each important claim with its evidence or reasoning, scope, and locator, and keep the authors' conclusions distinct from the vault's assessment. Multiple reports of one underlying study may share a `study_id`. `openalex_topics` are imported classifications; `concepts` are curated links to wiki pages.

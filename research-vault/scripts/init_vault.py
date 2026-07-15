@@ -15,6 +15,7 @@ import tempfile
 
 
 ASSET_FILES = (
+    ".gitignore",
     "AGENTS.md",
     "CLAUDE.md",
     "sources.base",
@@ -27,6 +28,7 @@ ASSET_FILES = (
 
 REQUIRED_DIRECTORIES = (
     "raw",
+    "markdown",
     "sources",
     "wiki",
     "state",
@@ -35,13 +37,16 @@ REQUIRED_DIRECTORIES = (
 )
 
 REQUIRED_FILES = (
+    ".gitignore",
     "AGENTS.md",
     "CLAUDE.md",
+    "PARSING.md",
     "sources.base",
     "wiki.base",
     "state/research.md",
     "state/candidates.json",
     "state/acquisition.json",
+    "state/parsing.json",
     "state/shortlist.json",
     "state/queue.json",
     "state/search-log.jsonl",
@@ -50,6 +55,8 @@ REQUIRED_FILES = (
     "scripts/seed_openalex.py",
     "scripts/acquire_openalex.py",
     "scripts/configure_openalex.py",
+    "scripts/process_sources.py",
+    "scripts/parse_sources.py",
 )
 
 
@@ -123,6 +130,8 @@ def validate_assets(assets_dir: Path) -> None:
             "seed_openalex.py",
             "acquire_openalex.py",
             "configure_openalex.py",
+            "process_sources.py",
+            "parse_sources.py",
         )
         if not (assets_dir.parent / "scripts" / name).is_file()
     ]
@@ -130,6 +139,8 @@ def validate_assets(assets_dir: Path) -> None:
         raise InitializationError(
             "The skill installation is missing scripts: " + ", ".join(missing_scripts)
         )
+    if not (assets_dir.parent / "references" / "parsing.md").is_file():
+        raise InitializationError("The skill installation is missing references/parsing.md.")
 
 
 def render_research(template: str, topic: str) -> str:
@@ -148,8 +159,9 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
     for directory in REQUIRED_DIRECTORIES:
         (vault / directory).mkdir(parents=True, exist_ok=False)
 
-    for name in ("AGENTS.md", "CLAUDE.md", "sources.base", "wiki.base"):
+    for name in (".gitignore", "AGENTS.md", "CLAUDE.md", "sources.base", "wiki.base"):
         shutil.copyfile(assets_dir / name, vault / name)
+    shutil.copyfile(assets_dir.parent / "references" / "parsing.md", vault / "PARSING.md")
 
     research_template = (assets_dir / "research.md.template").read_text(
         encoding="utf-8"
@@ -196,6 +208,21 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         + "\n",
         encoding="utf-8",
     )
+    (vault / "state" / "parsing.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": None,
+                "configuration": {},
+                "works": {},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     shutil.copyfile(
         assets_dir / "source-note.md", vault / "templates" / "source-note.md"
     )
@@ -206,6 +233,8 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         "seed_openalex.py",
         "acquire_openalex.py",
         "configure_openalex.py",
+        "process_sources.py",
+        "parse_sources.py",
     ):
         destination = vault / "scripts" / name
         shutil.copyfile(assets_dir.parent / "scripts" / name, destination)
@@ -276,6 +305,17 @@ def validate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         ) from error
     if acquisition.get("schema_version") != 1 or acquisition.get("works") != {}:
         raise InitializationError("state/acquisition.json was not initialized correctly.")
+
+    try:
+        parsing = json.loads(
+            (vault / "state" / "parsing.json").read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError as error:
+        raise InitializationError(
+            f"state/parsing.json is not valid JSON: {error}"
+        ) from error
+    if parsing.get("schema_version") != 1 or parsing.get("works") != {}:
+        raise InitializationError("state/parsing.json was not initialized correctly.")
 
 
 def initialize_vault(target: Path, topic: str, assets_dir: Path) -> None:

@@ -10,3 +10,7 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.ruff_cache/
+
+# Local parser benchmark environments, model caches, corpora, and outputs
+.benchmark/
