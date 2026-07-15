@@ -20,6 +20,7 @@ ASSET_FILES = (
     "sources.base",
     "wiki.base",
     "queue.json",
+    "shortlist.json",
     "source-note.md",
     "wiki-entry.md",
 )
@@ -41,12 +42,14 @@ REQUIRED_FILES = (
     "state/research.md",
     "state/candidates.json",
     "state/acquisition.json",
+    "state/shortlist.json",
     "state/queue.json",
     "state/search-log.jsonl",
     "templates/source-note.md",
     "templates/wiki-entry.md",
     "scripts/seed_openalex.py",
     "scripts/acquire_openalex.py",
+    "scripts/configure_openalex.py",
 )
 
 
@@ -108,14 +111,19 @@ def validate_assets(assets_dir: Path) -> None:
             "and one {{TOPIC_YAML}} placeholder."
         )
 
-    try:
-        json.loads((assets_dir / "queue.json").read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise InitializationError(f"assets/queue.json is not valid JSON: {error}") from error
+    for name in ("queue.json", "shortlist.json"):
+        try:
+            json.loads((assets_dir / name).read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise InitializationError(f"assets/{name} is not valid JSON: {error}") from error
 
     missing_scripts = [
         name
-        for name in ("seed_openalex.py", "acquire_openalex.py")
+        for name in (
+            "seed_openalex.py",
+            "acquire_openalex.py",
+            "configure_openalex.py",
+        )
         if not (assets_dir.parent / "scripts" / name).is_file()
     ]
     if missing_scripts:
@@ -151,6 +159,9 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         encoding="utf-8",
     )
     shutil.copyfile(assets_dir / "queue.json", vault / "state" / "queue.json")
+    shutil.copyfile(
+        assets_dir / "shortlist.json", vault / "state" / "shortlist.json"
+    )
     (vault / "state" / "candidates.json").write_text(
         json.dumps(
             {
@@ -175,7 +186,7 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": None,
                 "planned_at": None,
-                "queue_fingerprint": None,
+                "shortlist_fingerprint": None,
                 "content_price_usd": "0.01",
                 "works": {},
             },
@@ -191,7 +202,11 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
     shutil.copyfile(
         assets_dir / "wiki-entry.md", vault / "templates" / "wiki-entry.md"
     )
-    for name in ("seed_openalex.py", "acquire_openalex.py"):
+    for name in (
+        "seed_openalex.py",
+        "acquire_openalex.py",
+        "configure_openalex.py",
+    ):
         destination = vault / "scripts" / name
         shutil.copyfile(assets_dir.parent / "scripts" / name, destination)
         destination.chmod(0o755)
@@ -221,6 +236,17 @@ def validate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         raise InitializationError(f"state/queue.json is not valid JSON: {error}") from error
     if queue != []:
         raise InitializationError("state/queue.json must start as an empty JSON array.")
+
+    try:
+        shortlist = json.loads(
+            (vault / "state" / "shortlist.json").read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError as error:
+        raise InitializationError(
+            f"state/shortlist.json is not valid JSON: {error}"
+        ) from error
+    if shortlist != []:
+        raise InitializationError("state/shortlist.json must start as an empty JSON array.")
 
     try:
         candidates = json.loads(

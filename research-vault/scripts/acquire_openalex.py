@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Acquire OpenAlex metadata, PDFs, and GROBID TEI XML for a finalized queue."""
+"""Acquire content for a shortlist and finalize its validated source queue."""
 
 from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+import gzip
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
-import xml.etree.ElementTree as ET
 
 
 API_ROOT = "https://api.openalex.org"
@@ -65,7 +66,7 @@ def load_json(path: Path) -> object:
 
 def normalize_vault(raw: Path) -> Path:
     vault = Path(os.path.abspath(raw.expanduser()))
-    required = (vault / "state" / "research.md", vault / "state" / "queue.json")
+    required = (vault / "state" / "research.md", vault / "state" / "shortlist.json")
     if not vault.is_dir() or any(not path.is_file() for path in required):
         raise AcquisitionError(f"Not an initialized research vault: {vault}")
     return vault
@@ -78,26 +79,26 @@ def normalize_work_id(raw: object) -> str:
     return identifier
 
 
-def load_queue(vault: Path) -> tuple[list[dict[str, object]], list[str]]:
-    value = load_json(vault / "state" / "queue.json")
+def load_shortlist(vault: Path) -> tuple[list[dict[str, object]], list[str]]:
+    value = load_json(vault / "state" / "shortlist.json")
     if not isinstance(value, list) or not value:
         raise AcquisitionError(
-            "state/queue.json is empty or invalid; finalize OpenAlex seeding first."
+            "state/shortlist.json is empty or invalid; build the shortlist first."
         )
     records: list[dict[str, object]] = []
     identifiers: list[str] = []
     for item in value:
         if not isinstance(item, dict):
-            raise AcquisitionError("Every queue entry must be a JSON object.")
+            raise AcquisitionError("Every shortlist entry must be a JSON object.")
         identifier = normalize_work_id(item.get("openalex_id"))
         records.append(item)
         identifiers.append(identifier)
     if len(set(identifiers)) != len(identifiers):
-        raise AcquisitionError("state/queue.json contains duplicate OpenAlex work IDs.")
+        raise AcquisitionError("state/shortlist.json contains duplicate OpenAlex work IDs.")
     return records, identifiers
 
 
-def queue_fingerprint(identifiers: list[str]) -> str:
+def shortlist_fingerprint(identifiers: list[str]) -> str:
     encoded = json.dumps(sorted(identifiers), separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -109,27 +110,41 @@ def load_env_file(path: Path) -> None:
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def user_config_env_file() -> Path:
+    configured = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(configured).expanduser() if configured else Path.home() / ".config"
+    return Path(os.path.abspath(base)) / "research-vault" / ".env"
 
 
 def resolve_api_key(vault: Path, env_file: Path | None) -> str:
     if env_file is not None:
         load_env_file(Path(os.path.abspath(env_file.expanduser())))
     else:
-        for candidate in (Path.cwd() / ".env", vault / ".env", vault.parent / ".env"):
+        for candidate in (
+            Path.cwd() / ".env",
+            vault / ".env",
+            vault.parent / ".env",
+            user_config_env_file(),
+        ):
             load_env_file(candidate)
     key = os.environ.get("OPEN_ALEX") or os.environ.get("OPENALEX_API_KEY")
     if not key:
         raise AcquisitionError(
-            "OpenAlex API key not found. Set OPEN_ALEX or OPENALEX_API_KEY, "
-            "or pass --env-file."
+            "OpenAlex API key not found. Configure it once by running: "
+            f"python3 {shlex.quote(str(vault / 'scripts' / 'configure_openalex.py'))} "
+            "or pass --env-file. Never paste the key into chat."
         )
     return key
 
 
 def safe_http_error(error: HTTPError) -> str:
-    return f"OpenAlex returned HTTP {error.code}"
+    return f"HTTP {error.code}"
 
 
 def request_json(endpoint: str, params: dict[str, object], api_key: str) -> dict[str, object]:
@@ -238,10 +253,16 @@ def valid_content(path: Path, content_format: str) -> bool:
                 return False
             with path.open("rb") as handle:
                 return handle.read(5) == b"%PDF-"
-        root = ET.parse(path).getroot()
-        return root.tag.rsplit("}", 1)[-1] == "TEI"
-    except (OSError, ET.ParseError):
+        return path.stat().st_size > 0
+    except OSError:
         return False
+
+
+def decompress_xml_if_needed(path: Path) -> None:
+    with path.open("rb") as handle:
+        prefix = handle.read(2)
+    if prefix == b"\x1f\x8b":
+        path.write_bytes(gzip.decompress(path.read_bytes()))
 
 
 def content_record(
@@ -330,12 +351,22 @@ def summarize(state: dict[str, object]) -> dict[str, object]:
         )
         counts["estimated_missing_cost_usd"] = str(CONTENT_PRICE_USD * paid_pending)
         summary[content_format] = counts
+    summary["qualified_papers"] = sum(
+        1
+        for work in works.values()
+        if isinstance(work, dict)
+        and any(
+            isinstance(work.get(content_format), dict)
+            and work[content_format].get("status") == "downloaded"
+            for content_format in FORMAT_DETAILS
+        )
+    )
     return summary
 
 
 def command_plan(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
-    queue, identifiers = load_queue(vault)
+    shortlist, identifiers = load_shortlist(vault)
     api_key = resolve_api_key(vault, args.env_file)
     metadata = fetch_metadata(identifiers, api_key)
     previous_state = load_acquisition_state(vault, required=False)
@@ -344,7 +375,7 @@ def command_plan(args: argparse.Namespace) -> None:
     )
     planned_at = utc_now()
     state_works: dict[str, object] = {}
-    queue_by_id = {normalize_work_id(item.get("openalex_id")): item for item in queue}
+    shortlist_by_id = {normalize_work_id(item.get("openalex_id")): item for item in shortlist}
     for identifier in identifiers:
         work = metadata[identifier]
         directory = work_directory(vault, identifier)
@@ -364,7 +395,7 @@ def command_plan(args: argparse.Namespace) -> None:
             else {}
         )
         state_works[identifier] = {
-            "title": work.get("display_name") or queue_by_id[identifier].get("title"),
+            "title": work.get("display_name") or shortlist_by_id[identifier].get("title"),
             "license": (
                 external_pdf.get("license")
                 if pdf_source == EXTERNAL_SOURCE and external_pdf
@@ -401,7 +432,7 @@ def command_plan(args: argparse.Namespace) -> None:
         "created_at": created_at,
         "updated_at": planned_at,
         "planned_at": planned_at,
-        "queue_fingerprint": queue_fingerprint(identifiers),
+        "shortlist_fingerprint": shortlist_fingerprint(identifiers),
         "content_price_usd": str(CONTENT_PRICE_USD),
         "works": state_works,
     }
@@ -460,6 +491,8 @@ def download_url(
                     break
                 handle.write(chunk)
             content_type = response.headers.get("Content-Type")
+        if content_format == "xml":
+            decompress_xml_if_needed(temporary)
         if not valid_content(temporary, content_format):
             raise AcquisitionError(f"Downloaded {content_format.upper()} failed validation.")
         temporary.replace(destination)
@@ -498,9 +531,9 @@ def download_external_pdf(
 
 
 def require_current_plan(vault: Path) -> tuple[dict[str, object], list[str]]:
-    _, identifiers = load_queue(vault)
+    _, identifiers = load_shortlist(vault)
     state = load_acquisition_state(vault)
-    if state.get("queue_fingerprint") != queue_fingerprint(identifiers):
+    if state.get("shortlist_fingerprint") != shortlist_fingerprint(identifiers):
         raise AcquisitionError("The acquisition plan is stale; run plan again.")
     return state, identifiers
 
@@ -594,7 +627,8 @@ def command_run(args: argparse.Namespace) -> None:
         state["updated_at"] = utc_now()
         state["last_run_at"] = state["updated_at"]
         atomic_write_json(vault / "state" / "acquisition.json", state)
-    print(f"Downloaded: {downloaded}; failed: {failures}; skipped: {len(identifiers) * len(args.formats) - len(requests)}")
+    possible = len(identifiers) * len(args.formats)
+    print(f"Downloaded: {downloaded}; failed: {failures}; skipped: {possible - len(requests)}")
     if failures:
         raise AcquisitionError("Some downloads failed; inspect status and rerun when ready.")
 
@@ -606,7 +640,7 @@ def command_status(args: argparse.Namespace) -> None:
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
-    print(f"Papers: {summary['papers']}")
+    print(f"Papers: {summary['papers']}; qualified with PDF or XML: {summary['qualified_papers']}")
     for content_format in FORMAT_DETAILS:
         counts = summary[content_format]
         assert isinstance(counts, dict)
@@ -617,6 +651,51 @@ def command_status(args: argparse.Namespace) -> None:
             f"({counts['openalex_source']} OpenAlex, "
             f"{counts['external_source']} external OA)"
         )
+
+
+def command_finalize(args: argparse.Namespace) -> None:
+    vault = normalize_vault(args.vault)
+    state, identifiers = require_current_plan(vault)
+    shortlist, _ = load_shortlist(vault)
+    works = state["works"]
+    assert isinstance(works, dict)
+    shortlist_by_id = {normalize_work_id(item.get("openalex_id")): item for item in shortlist}
+    queue = []
+    for identifier in identifiers:
+        work = works.get(identifier)
+        if not isinstance(work, dict):
+            continue
+        artifacts = {
+            content_format: record.get("path")
+            for content_format in FORMAT_DETAILS
+            if isinstance((record := work.get(content_format)), dict)
+            and record.get("status") == "downloaded"
+            and valid_content(vault / str(record.get("path")), content_format)
+        }
+        if not artifacts:
+            continue
+        queue.append(
+            {
+                **shortlist_by_id[identifier],
+                "status": "ready-for-ingestion",
+                "artifacts": artifacts,
+            }
+        )
+    candidates = load_json(vault / "state" / "candidates.json")
+    target = candidates.get("target") if isinstance(candidates, dict) and isinstance(candidates.get("target"), dict) else {}
+    minimum = args.min_papers if args.min_papers is not None else int(target.get("min", 80))
+    maximum = args.max_papers if args.max_papers is not None else int(target.get("max", 100))
+    if minimum < 1 or maximum < minimum:
+        raise AcquisitionError("Invalid final queue target.")
+    if not args.allow_outside_target and not minimum <= len(queue) <= maximum:
+        raise AcquisitionError(
+            f"Only {len(queue)} shortlisted papers have a validated PDF or downloaded XML; required "
+            f"range is {minimum}–{maximum}. Add targeted replacements and rebuild the "
+            "shortlist, or explicitly allow a smaller final queue."
+        )
+    atomic_write_json(vault / "state" / "queue.json", queue)
+    print(f"Finalized {len(queue)} retained sources in {vault / 'state' / 'queue.json'}")
+    print(f"Excluded without a validated PDF or downloaded XML: {len(shortlist) - len(queue)}")
 
 
 def add_api_options(parser: argparse.ArgumentParser) -> None:
@@ -643,7 +722,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="Download cached OpenAlex content and external OA PDFs.")
     run.add_argument("vault", type=Path)
-    run.add_argument("--formats", type=parse_formats, default=("pdf", "xml"))
+    run.add_argument(
+        "--formats",
+        type=parse_formats,
+        default=("pdf", "xml"),
+        help="Formats to retrieve (default: pdf,xml).",
+    )
     run.add_argument("--max-cost-usd", type=parse_money, required=True)
     add_api_options(run)
     run.set_defaults(handler=command_run)
@@ -652,6 +736,15 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("vault", type=Path)
     status.add_argument("--json", action="store_true")
     status.set_defaults(handler=command_status)
+
+    finalize = commands.add_parser(
+        "finalize", help="Write queue.json using papers with a validated PDF or downloaded XML."
+    )
+    finalize.add_argument("vault", type=Path)
+    finalize.add_argument("--min-papers", type=int)
+    finalize.add_argument("--max-papers", type=int)
+    finalize.add_argument("--allow-outside-target", action="store_true")
+    finalize.set_defaults(handler=command_finalize)
     return parser
 
 

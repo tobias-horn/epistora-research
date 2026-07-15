@@ -1,4 +1,4 @@
 interface:
   display_name: "Research Vault"
-  short_description: "Build and acquire an OpenAlex research vault"
-  default_prompt: "Use $research-vault to initialize a research vault, build its OpenAlex paper list, and acquire the finalized sources."
+  short_description: "Build an ingestible OpenAlex research vault"
+  default_prompt: "Use $research-vault to create a research vault, identify the field terminology, and acquire 80–100 relevant sources with every available PDF and XML."

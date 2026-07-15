@@ -1,84 +1,87 @@
 # Initial OpenAlex seeding
 
-Build a screened metadata list before downloading or ingesting any paper. Aim for 80–100 unique papers by default, but prefer a defensible smaller or larger set when the literature genuinely warrants it.
+Build a relevant, content-qualified shortlist before downloading papers. Aim for 80–100 unique papers, weighted toward the research frontier with only the foundational work needed to understand it.
 
-## Division of responsibility
+Use agent judgment for topic interpretation, terminology, relevance, strands, anchors, balance, and stopping. Use `scripts/seed_openalex.py` for OpenAlex requests, availability filtering, logging, candidate state, decisions, version grouping, and shortlist creation.
 
-Use agent judgment for:
-
-- interpreting the user's topic and intended breadth;
-- deciding what is core, supporting, contextual, or irrelevant;
-- extracting terminology from relevant records;
-- defining and revising search strands;
-- selecting anchors and balancing the final set;
-- deciding when marginal discovery is low enough to stop.
-
-Use `scripts/seed_openalex.py` for:
-
-- authenticated OpenAlex requests;
-- stable filters and request retries;
-- sanitized raw-response storage;
-- append-only search logging;
-- candidate metadata merging and provenance;
-- screening-decision validation;
-- version grouping and final queue creation.
-
-Never put an API key in a command, log, or vault file. The script reads `OPEN_ALEX` or `OPENALEX_API_KEY` from the environment. It also checks `.env` in the current directory, vault, and vault parent; use `--env-file` when needed.
+Never ask for or put an API key in chat, a command argument, a log, or the vault. The script checks `OPEN_ALEX`, `OPENALEX_API_KEY`, local `.env` files, and `${XDG_CONFIG_HOME:-~/.config}/research-vault/.env`. If missing, tell the user to run `python3 <vault>/scripts/configure_openalex.py` in their own terminal and resume after confirmation.
 
 ## 1. Frame the topic
 
-Update `state/research.md` with a short interpretation of:
+Update `state/research.md` with the intended question, breadth, important mechanisms or outcomes, counterevidence worth seeking, and justified exclusions. Treat this as provisional search guidance.
 
-- central phenomenon or intervention;
-- intended breadth;
-- relevant populations, systems, applications, or contexts;
-- outcomes and mechanisms of interest;
-- risks, failure modes, disagreement, or counterevidence worth seeking;
-- justified exclusions.
+## 2. Discover the field's terminology
 
-Treat these as provisional search guidance, not a permanent taxonomy.
+Do not assume the user's wording is the literature's main term. Run approximately three reconnaissance queries of 20 results per availability lane:
 
-## 2. Run reconnaissance
-
-Start with approximately four searches of 20 relevance-ranked records each:
-
-1. the user's natural-language formulation;
-2. a quoted core phrase;
-3. a plausible synonym or historical term;
-4. an abbreviation, named method, mechanism, or application.
-
-Add another search only when the topic clearly has competing terminology. Keep relevance ranking; do not sort broad searches newest-first.
+1. the user's wording;
+2. a plausible technical or historical synonym;
+3. a named mechanism, method, population, or application associated with the topic.
 
 ```bash
 python3 <vault>/scripts/seed_openalex.py search <vault> \
-  --stage reconnaissance \
-  --strand natural-language \
-  --rationale "Test the user's formulation and discover field vocabulary" \
+  --stage terminology \
+  --strand user-wording \
+  --rationale "Test the user's wording and identify the field's terminology" \
   --query "partial cellular reprogramming rejuvenation aging"
 ```
 
-The script always excludes retracted records and limits results to articles, books, book chapters, preprints, reports, reviews, and dissertations. Do not initially require open access, a PDF, or an abstract.
+Every search runs three deterministic lanes and merges them: cached PDF, cached GROBID XML, and open-access records with a direct PDF URL. Landing-page-only and metadata-only records are not added as candidates.
 
-## 3. Review and apply decisions
+Review the relevant titles, abstracts, keywords, and recurring phrases. Choose a core phrase that is specific enough for precision but common enough to retrieve the field. Record why it was chosen:
 
-Request a manageable batch:
+```bash
+python3 <vault>/scripts/seed_openalex.py set-core-phrase <vault> \
+  --phrase "partial cellular reprogramming" \
+  --rationale "This is the recurring term used by directly relevant recent and review papers."
+```
+
+Also record the phrase in `state/research.md`.
+
+## 3. Build focused strands
+
+Construct 3–6 strands with one purpose each. Pass only the strand operator; the script combines it with the recorded core phrase:
+
+```bash
+python3 <vault>/scripts/seed_openalex.py search <vault> \
+  --stage frontier \
+  --strand recent-mechanisms \
+  --rationale "Find recent mechanism work" \
+  --from-year 2022 \
+  --operator '"cell identity" OR rejuvenation OR epigenetic'
+```
+
+This produces a query of the form:
+
+```text
+"<core phrase>" AND (<strand operator>)
+```
+
+The script also requires the core phrase in the title or abstract for strand searches, reducing papers that only mention the topic somewhere in their full text.
+
+Start frontier coverage with roughly the last five years and adjust when the field moves unusually quickly or slowly. Keep relevance ranking for normal searches. Use newest-first only for a tightly scoped recent strand.
+
+Retain a strand when it finds at least five new core or supporting papers or fills a clear gap. Reformulate or retire it when fewer than roughly 20 percent of reviewed results are relevant or it adds almost no unique work.
+
+## 4. Screen candidates
+
+Request manageable batches:
 
 ```bash
 python3 <vault>/scripts/seed_openalex.py review <vault> --limit 20 --format json
 ```
 
-Read titles and abstracts. Use these labels:
+Use these labels:
 
-- `core`: directly answers or defines the research topic;
+- `core`: directly answers or defines the topic;
 - `supporting`: supplies a necessary mechanism, method, comparison, or context;
-- `contextual`: potentially useful but not necessary for the initial seed;
-- `exclude`: clearly outside scope;
-- `uncertain`: insufficient metadata or unresolved relevance;
-- `unreviewed`: no judgment yet.
+- `contextual`: potentially useful but not necessary initially;
+- `exclude`: outside scope;
+- `uncertain`: relevance cannot yet be established.
 
-Extract terminology only from core and supporting records. Keep terms short and retain them on the record that supplied them.
+Select only `core` and `supporting` records for the shortlist; keep contextual records in candidate state only.
 
-Write a temporary decisions file:
+Apply decisions through a JSON file:
 
 ```json
 {
@@ -86,111 +89,52 @@ Write a temporary decisions file:
     {
       "openalex_id": "https://openalex.org/W123",
       "label": "core",
-      "roles": ["primary-study", "mechanism"],
-      "reason": "Directly tests the intervention and measures the target outcome.",
+      "roles": ["frontier", "primary-study", "mechanism"],
+      "reason": "Directly tests the target mechanism in the intended system.",
       "terms": ["maturation-phase transient reprogramming"],
       "selected": true
-    },
-    {
-      "openalex_id": "https://openalex.org/W456",
-      "label": "exclude",
-      "reason": "Uses the same phrase for an unrelated biological process.",
-      "selected": false
     }
   ]
 }
 ```
 
-Apply it deterministically:
-
 ```bash
 python3 <vault>/scripts/seed_openalex.py apply-decisions <vault> <decisions.json>
 ```
 
-Roles are agent-defined kebab-case descriptors. Useful examples include `foundational`, `review`, `primary-study`, `method`, `mechanism`, `safety`, `negative-result`, `contradictory`, and `frontier`.
+## 5. Expand a small anchor set
 
-## 4. Build independent strands
-
-Construct 3–6 strands from relevant terminology. Give each strand one retrieval purpose, such as a mechanism, application, risk, named theory, population, or outcome. Prefer several interpretable searches to one large Boolean expression.
-
-Retain a strand when it finds at least five new core or supporting records, fills a planned coverage gap, or recovers a landmark. Reformulate or retire it when most of the top 20 are irrelevant or when it adds almost no unique relevant work. Treat these as starting heuristics, not rigid rules.
-
-Log the reason for every refinement in `--rationale`. Use `--from-year` with relevance ranking for a frontier strand:
-
-```bash
-python3 <vault>/scripts/seed_openalex.py search <vault> \
-  --stage frontier \
-  --strand recent-mechanisms \
-  --rationale "Find recent work while retaining relevance ranking" \
-  --from-year 2024 \
-  --query '"partial reprogramming" AND "cell identity"'
-```
-
-Avoid `--sort newest` for broad searches. It is available for exceptional cases but commonly destroys precision.
-
-## 5. Expand anchors
-
-Choose 2–4 anchors when available:
-
-- a recent, high-quality review;
-- a seminal or influential primary study;
-- a recent primary study;
-- a critical, safety, negative, or contradictory source.
-
-Retrieve every indexed reference and a recent-citing slice:
+Choose 2–4 relevant, content-qualified anchors: a recent review, an influential foundation, a recent primary study, and critical or contradictory evidence when available.
 
 ```bash
 python3 <vault>/scripts/seed_openalex.py expand-anchor <vault> \
   --id W4392348348 \
   --strand review-citation-neighborhood \
-  --rationale "Recover landmarks and recent work missed by keyword ranking" \
-  --from-year 2024 \
+  --rationale "Recover accessible landmarks and recent citing work" \
+  --from-year 2022 \
   --recent-citing 20
 ```
 
-The script batches and retrieves all reference metadata before local screening. Do not truncate an anchor's references to the API's first page. Generic related-work expansion is intentionally omitted because it produced weak precision in testing.
+The script retains only references and citing works with a PDF or XML route. An inaccessible anchor may guide discovery but cannot enter the shortlist.
 
-## 6. Assemble a balanced selection
+## 6. Balance and shortlist
 
-Select papers explicitly in decision files. Use roles to monitor balance rather than allowing citation counts or one search ranking to define the seed. For a typical 80–100-paper seed, seek representation from:
+For a typical vault, use roughly 55–65 percent frontier work, 20–30 percent current core or connective evidence, and 10–20 percent foundations. Adapt this to the topic rather than forcing quotas. Prefer an accessible preprint or working-paper version when a published version is unavailable.
 
-- foundational and field-defining work;
-- primary evidence and central mechanisms;
-- methods and measurement;
-- recent frontier work;
-- safety, limitations, negative evidence, and disagreement;
-- useful reviews that organize or connect the field.
-
-These categories may overlap and their proportions must follow the topic. Do not select a paper merely because a PDF is available.
-
-Check progress:
+Stop when 80–100 relevant papers cover the intended strands and two successive refinements produce little unique relevant work. Do not pad the set. Check progress with:
 
 ```bash
 python3 <vault>/scripts/seed_openalex.py status <vault>
 ```
 
-Continue until the intended dimensions are represented and additional searches produce little new core or supporting literature. A practical stopping signal is two successive refinements yielding fewer than five new relevant papers or less than roughly ten percent unique relevant yield, provided no obvious landmark or coverage gap remains.
-
-## 7. Finalize
-
-Finalize only after screening and selection:
+Then write the acquisition shortlist:
 
 ```bash
-python3 <vault>/scripts/seed_openalex.py finalize <vault>
+python3 <vault>/scripts/seed_openalex.py shortlist <vault>
 ```
 
-The command groups duplicate title versions, prefers a published scholarly version, and writes the unique selected list to `state/queue.json`. It enforces the vault's 80–100 target by default. If the topic defensibly requires another size, pass an explicit range or `--allow-outside-target` and record the rationale in `state/research.md`.
-
-The completed queue is metadata only. Do not download files, create source notes, or begin wiki synthesis during this stage.
+This writes `state/shortlist.json` and clears `state/queue.json`. The final queue is created only after acquisition validates at least one PDF or XML per paper.
 
 ## Audit expectations
 
-Treat OpenAlex `meta.count` as a raw match count, not an eligible-paper count. Preserve:
-
-- exact query, filters, sort, stage, strand, rationale, timestamp, counts, IDs, and raw response;
-- relevance label and reason for selected and excluded records;
-- discovered terminology with source provenance;
-- duplicate/version relationships;
-- final coverage and stopping rationale.
-
-Use `state/search-log.jsonl` for the machine audit trail and `state/research.md` for the concise human-readable strategy and conclusions.
+Preserve exact queries, availability lanes, filters, sort, rationale, timestamps, result counts, candidate IDs, the chosen core phrase, screening decisions, version relationships, coverage, and stopping rationale. Use `state/search-log.jsonl` for the machine trail and `state/research.md` for the concise human-readable strategy.

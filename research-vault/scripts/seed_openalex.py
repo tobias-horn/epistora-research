@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and finalize a logged OpenAlex candidate set for a research vault."""
+"""Build a logged, content-qualified OpenAlex shortlist for a research vault."""
 
 from __future__ import annotations
 
@@ -11,12 +11,13 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import tempfile
 import time
 import unicodedata
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -25,6 +26,11 @@ DEFAULT_FILTER = (
     "type:article|book|book-chapter|preprint|report|review|dissertation,"
     "is_retracted:false"
 )
+AVAILABILITY_FILTERS = {
+    "cached-pdf": "has_content.pdf:true",
+    "cached-xml": "has_content.grobid_xml:true",
+    "external-pdf": "open_access.is_oa:true",
+}
 LABELS = {"unreviewed", "core", "supporting", "contextual", "exclude", "uncertain"}
 TYPE_PRIORITY = {
     "article": 8,
@@ -114,21 +120,35 @@ def load_env_file(path: Path) -> None:
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def user_config_env_file() -> Path:
+    configured = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(configured).expanduser() if configured else Path.home() / ".config"
+    return Path(os.path.abspath(base)) / "research-vault" / ".env"
 
 
 def resolve_api_key(vault: Path, env_file: Path | None) -> str:
     if env_file is not None:
         load_env_file(Path(os.path.abspath(env_file.expanduser())))
     else:
-        for candidate in (Path.cwd() / ".env", vault / ".env", vault.parent / ".env"):
+        for candidate in (
+            Path.cwd() / ".env",
+            vault / ".env",
+            vault.parent / ".env",
+            user_config_env_file(),
+        ):
             load_env_file(candidate)
     key = os.environ.get("OPEN_ALEX") or os.environ.get("OPENALEX_API_KEY")
     if not key:
         raise SeedingError(
-            "OpenAlex API key not found. Set OPEN_ALEX or OPENALEX_API_KEY, "
-            "or pass --env-file."
+            "OpenAlex API key not found. Configure it once by running: "
+            f"python3 {shlex.quote(str(vault / 'scripts' / 'configure_openalex.py'))} "
+            "or pass --env-file. Never paste the key into chat."
         )
     return key
 
@@ -186,6 +206,33 @@ def location_summary(location: object) -> dict[str, object] | None:
     }
 
 
+def direct_oa_pdf(work: dict[str, object]) -> bool:
+    locations: list[object] = [work.get("best_oa_location")]
+    locations.extend(work.get("locations") or [])
+    for location in locations:
+        if not isinstance(location, dict) or location.get("is_oa") is not True:
+            continue
+        raw_url = location.get("pdf_url")
+        if not isinstance(raw_url, str):
+            continue
+        parsed = urlparse(raw_url.strip())
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return True
+    return False
+
+
+def content_availability(work: dict[str, object]) -> list[str]:
+    content = work.get("has_content") if isinstance(work.get("has_content"), dict) else {}
+    available = []
+    if content.get("pdf"):
+        available.append("cached-pdf")
+    if content.get("grobid_xml"):
+        available.append("cached-xml")
+    if direct_oa_pdf(work):
+        available.append("external-pdf")
+    return available
+
+
 def compact_work(work: dict[str, object]) -> dict[str, object]:
     authors = []
     for authorship in work.get("authorships") or []:
@@ -217,7 +264,7 @@ def compact_work(work: dict[str, object]) -> dict[str, object]:
         if isinstance(keyword, dict)
     ]
     primary_topic = work.get("primary_topic") if isinstance(work.get("primary_topic"), dict) else {}
-    content = work.get("has_content") if isinstance(work.get("has_content"), dict) else {}
+    availability = content_availability(work)
     best_location = location_summary(work.get("best_oa_location"))
     return {
         "openalex_id": work.get("id"),
@@ -241,7 +288,10 @@ def compact_work(work: dict[str, object]) -> dict[str, object]:
         "is_oa": bool((work.get("open_access") or {}).get("is_oa"))
         if isinstance(work.get("open_access"), dict)
         else False,
-        "has_pdf": bool(content.get("pdf") or (best_location or {}).get("pdf_url")),
+        "has_pdf": "cached-pdf" in availability or "external-pdf" in availability,
+        "has_xml": "cached-xml" in availability,
+        "available_content": bool(availability),
+        "availability": availability,
         "primary_location": location_summary(work.get("primary_location")),
         "best_oa_location": best_location,
         "referenced_works": work.get("referenced_works") or [],
@@ -353,6 +403,45 @@ def print_result_preview(results: list[dict[str, object]], limit: int = 10) -> N
         )
 
 
+def command_set_core_phrase(args: argparse.Namespace) -> None:
+    vault = normalize_vault(args.vault)
+    state = load_state(vault)
+    phrase = args.phrase.strip()
+    rationale = args.rationale.strip()
+    if not phrase or not rationale:
+        raise SeedingError("Core phrase and rationale must not be empty.")
+    state["core_phrase"] = {
+        "value": phrase,
+        "rationale": rationale,
+        "set_at": utc_now(),
+    }
+    state["updated_at"] = utc_now()
+    atomic_write_json(vault / "state" / "candidates.json", state)
+    append_log(
+        vault / "state" / "search-log.jsonl",
+        {
+            "event": "core-phrase",
+            "executed_at": utc_now(),
+            "phrase": phrase,
+            "rationale": rationale,
+        },
+    )
+    print(f"Core phrase set to: {phrase}")
+
+
+def resolve_search_query(args: argparse.Namespace, state: dict[str, object]) -> tuple[str, str | None]:
+    if args.operator is None:
+        return args.query, None
+    configured = state.get("core_phrase")
+    if not isinstance(configured, dict) or not isinstance(configured.get("value"), str):
+        raise SeedingError("Set the core phrase before running an operator-based strand search.")
+    core_phrase = configured["value"].strip()
+    operator = args.operator.strip()
+    if not operator:
+        raise SeedingError("Strand operator must not be empty.")
+    return f'"{core_phrase}" AND ({operator})', core_phrase
+
+
 def command_search(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
@@ -363,27 +452,68 @@ def command_search(args: argparse.Namespace) -> None:
         {str(candidate.get("version_key")) for candidate in works_before.values() if isinstance(candidate, dict)}
     )
     api_key = resolve_api_key(vault, args.env_file)
-    search_filter = build_filter(args.filter, args.from_year)
-    params: dict[str, object] = {
-        "search": args.query,
-        "filter": search_filter,
-        "per_page": args.per_page,
-    }
-    if args.sort == "newest":
-        params["sort"] = "publication_date:desc"
-    elif args.sort == "cited":
-        params["sort"] = "cited_by_count:desc"
-    search_id = make_search_id(args.stage, args.query + args.strand + utc_now())
+    query, core_phrase = resolve_search_query(args, state)
+    search_id = make_search_id(args.stage, query + args.strand + utc_now())
     started = time.perf_counter()
-    payload = request_json("works", params, api_key)
+    responses: dict[str, object] = {}
+    filters: dict[str, str] = {}
+    totals: dict[str, object] = {}
+    returned_by_lane: dict[str, int] = {}
+    results_by_id: dict[str, dict[str, object]] = {}
+    sightings: dict[str, dict[str, object]] = {}
+    sort_value = {
+        "relevance": "relevance_score",
+        "newest": "publication_date:desc",
+        "cited": "cited_by_count:desc",
+    }[args.sort]
+    core_filter = (
+        f'title_and_abstract.search:"{core_phrase}"'
+        if core_phrase is not None
+        else None
+    )
+    for lane, availability_filter in AVAILABILITY_FILTERS.items():
+        search_filter = build_filter(
+            ",".join(
+                part
+                for part in (args.filter, core_filter, availability_filter)
+                if part
+            ),
+            args.from_year,
+        )
+        params: dict[str, object] = {
+            "search": query,
+            "filter": search_filter,
+            "per_page": args.per_page,
+        }
+        if args.sort != "relevance":
+            params["sort"] = sort_value
+        payload = request_json("works", params, api_key)
+        responses[lane] = payload
+        filters[lane] = search_filter
+        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        totals[lane] = meta.get("count")
+        results = payload.get("results")
+        if not isinstance(results, list):
+            raise SeedingError("OpenAlex search response is missing results.")
+        returned_by_lane[lane] = 0
+        for rank, raw_work in enumerate(results, 1):
+            if not isinstance(raw_work, dict) or not content_availability(raw_work):
+                continue
+            returned_by_lane[lane] += 1
+            identifier = raw_work.get("id")
+            if not isinstance(identifier, str):
+                continue
+            results_by_id.setdefault(identifier, raw_work)
+            sighting = sightings.setdefault(identifier, {"rank": rank, "lanes": []})
+            sighting["rank"] = min(int(sighting["rank"]), rank)
+            lanes = sighting["lanes"]
+            assert isinstance(lanes, list)
+            if lane not in lanes:
+                lanes.append(lane)
     elapsed_ms = round((time.perf_counter() - started) * 1000)
-    results = payload.get("results")
-    if not isinstance(results, list):
-        raise SeedingError("OpenAlex search response is missing results.")
     identifiers = []
-    for rank, raw_work in enumerate(results, 1):
-        if not isinstance(raw_work, dict):
-            continue
+    for identifier, raw_work in results_by_id.items():
+        sighting = sightings[identifier]
         identifiers.append(
             merge_work(
                 state,
@@ -392,7 +522,8 @@ def command_search(args: argparse.Namespace) -> None:
                     "search_id": search_id,
                     "stage": args.stage,
                     "strand": args.strand,
-                    "rank": rank,
+                    "rank": sighting["rank"],
+                    "availability_lanes": sighting["lanes"],
                 },
             )
         )
@@ -405,9 +536,13 @@ def command_search(args: argparse.Namespace) -> None:
     new_records = len(works_after) - record_count_before
     new_groups = group_count_after - group_count_before
     atomic_write_json(vault / "state" / "candidates.json", state)
-    request_data = {**params, "sort": params.get("sort", "relevance_score")}
-    saved = save_raw(vault, search_id, request_data, payload)
-    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    request_data = {
+        "query": query,
+        "filters": filters,
+        "per_page_per_lane": args.per_page,
+        "sort": sort_value,
+    }
+    saved = save_raw(vault, search_id, request_data, responses)
     append_log(
         vault / "state" / "search-log.jsonl",
         {
@@ -416,11 +551,14 @@ def command_search(args: argparse.Namespace) -> None:
             "stage": args.stage,
             "strand": args.strand,
             "rationale": args.rationale,
-            "query": args.query,
-            "filter": search_filter,
+            "query": query,
+            "core_phrase": core_phrase,
+            "strand_operator": args.operator,
+            "filters": filters,
             "sort": request_data["sort"],
             "executed_at": utc_now(),
-            "total_results": meta.get("count"),
+            "total_results_by_lane": totals,
+            "qualified_results_by_lane": returned_by_lane,
             "returned_results": len(identifiers),
             "returned_ids": identifiers,
             "new_candidate_records": new_records,
@@ -431,13 +569,16 @@ def command_search(args: argparse.Namespace) -> None:
         },
     )
     print(f"Search ID: {search_id}")
-    print(f"OpenAlex matches: {meta.get('count', 'unknown')}; returned: {len(identifiers)}")
+    print(
+        f"OpenAlex matches by lane: {totals}; qualified returned by lane: "
+        f"{returned_by_lane}; unique returned: {len(identifiers)}"
+    )
     print(
         f"New records: {new_records}; new version groups: {new_groups}; "
         f"candidate total: {len(state['works'])}"
     )
     print(f"Raw response: {saved}")
-    print_result_preview([item for item in results if isinstance(item, dict)])
+    print_result_preview(list(results_by_id.values()))
 
 
 def batch(values: list[str], size: int) -> list[list[str]]:
@@ -474,7 +615,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
             payload = request_json("works", params, api_key)
             raw_responses["reference_batches"].append(payload)  # type: ignore[union-attr]
             for rank, raw_work in enumerate(payload.get("results") or [], 1):
-                if isinstance(raw_work, dict):
+                if isinstance(raw_work, dict) and content_availability(raw_work):
                     merged.append(
                         merge_work(
                             state,
@@ -501,7 +642,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
         recent = request_json("works", params, api_key)
         raw_responses["recent_citing"] = recent
         for rank, raw_work in enumerate(recent.get("results") or [], 1):
-            if isinstance(raw_work, dict):
+            if isinstance(raw_work, dict) and content_availability(raw_work):
                 recent_ids.append(
                     merge_work(
                         state,
@@ -515,7 +656,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
                         },
                     )
                 )
-    if isinstance(anchor, dict):
+    if isinstance(anchor, dict) and content_availability(anchor):
         merge_work(
             state,
             anchor,
@@ -601,6 +742,8 @@ def command_review(args: argparse.Namespace) -> None:
                 if isinstance(metadata.get("primary_topic"), dict)
                 else None,
                 "has_pdf": metadata.get("has_pdf"),
+                "has_xml": metadata.get("has_xml"),
+                "availability": metadata.get("availability") or [],
                 "label": screening.get("label"),
                 "roles": screening.get("roles") or [],
                 "selected": candidate.get("selected", False),
@@ -614,7 +757,10 @@ def command_review(args: argparse.Namespace) -> None:
     for index, row in enumerate(selected, args.offset + 1):
         print(f"## {index}. {row['title']} ({row['year'] or 'n.d.'})")
         print(f"- OpenAlex: {row['openalex_id']}")
-        print(f"- Type: {row['type']}; citations: {row['cited_by_count']}; PDF: {row['has_pdf']}")
+        print(
+            f"- Type: {row['type']}; citations: {row['cited_by_count']}; "
+            f"content: {', '.join(row['availability'])}"
+        )
         print(f"- Authors: {', '.join(str(name) for name in row['authors'] if name)}")
         if row["abstract"]:
             abstract = str(row["abstract"])
@@ -670,9 +816,9 @@ def command_apply_decisions(args: argparse.Namespace) -> None:
             if not isinstance(decision["selected"], bool):
                 raise SeedingError("Decision selected field must be true or false.")
             candidate["selected"] = decision["selected"]
-        if candidate.get("selected") and screening.get("label") not in {"core", "supporting", "contextual"}:
+        if candidate.get("selected") and screening.get("label") not in {"core", "supporting"}:
             raise SeedingError(
-                f"Selected candidate must be core, supporting, or contextual: {identifier}"
+                f"Selected candidate must be core or supporting: {identifier}"
             )
         if (candidate.get("selected") or screening.get("label") == "exclude") and not screening.get("reason"):
             raise SeedingError(f"Selected or excluded candidate requires a reason: {identifier}")
@@ -718,7 +864,7 @@ def command_status(args: argparse.Namespace) -> None:
     assert isinstance(works, dict)
     labels = Counter()
     stages = Counter()
-    abstracts = pdfs = selected_records = 0
+    abstracts = pdfs = xmls = selected_records = 0
     for candidate in works.values():
         if not isinstance(candidate, dict):
             continue
@@ -728,6 +874,7 @@ def command_status(args: argparse.Namespace) -> None:
         metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
         abstracts += int(bool(metadata.get("abstract")))
         pdfs += int(bool(metadata.get("has_pdf")))
+        xmls += int(bool(metadata.get("has_xml")))
         for discovery in candidate.get("discovered_by") or []:
             if isinstance(discovery, dict):
                 stages[str(discovery.get("stage") or "unknown")] += 1
@@ -746,6 +893,8 @@ def command_status(args: argparse.Namespace) -> None:
         "labels": dict(sorted(labels.items())),
         "abstracts_available": abstracts,
         "pdfs_reported": pdfs,
+        "xmls_reported": xmls,
+        "core_phrase": state.get("core_phrase"),
         "discovery_occurrences_by_stage": dict(sorted(stages.items())),
     }
     if args.json:
@@ -755,7 +904,12 @@ def command_status(args: argparse.Namespace) -> None:
     print(f"Candidates: {len(works)} records / {len(groups)} version groups")
     print(f"Selected: {selected_groups} unique papers (target {state['target']['min']}–{state['target']['max']})")
     print(f"Labels: {dict(sorted(labels.items()))}")
-    print(f"Abstracts: {abstracts}; PDFs reported: {pdfs}")
+    core_phrase = state.get("core_phrase")
+    if isinstance(core_phrase, dict):
+        print(f"Core phrase: {core_phrase.get('value')}")
+    else:
+        print("Core phrase: not set")
+    print(f"Abstracts: {abstracts}; PDFs reported: {pdfs}; XML reported: {xmls}")
     print(f"Discovery occurrences: {dict(sorted(stages.items()))}")
 
 
@@ -771,23 +925,32 @@ def preference(candidate: dict[str, object]) -> tuple[object, ...]:
     )
 
 
-def command_finalize(args: argparse.Namespace) -> None:
+def command_shortlist(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
     works = state["works"]
     assert isinstance(works, dict)
-    queue = []
+    shortlist = []
     collapsed_versions = 0
     for members in grouped_candidates(works).values():
-        selected = [candidate for candidate in members if candidate.get("selected")]
+        selected = [
+            candidate
+            for candidate in members
+            if candidate.get("selected")
+            and isinstance(candidate.get("screening"), dict)
+            and candidate["screening"].get("label") in {"core", "supporting"}
+        ]
         if not selected:
             continue
         eligible = []
         for candidate in members:
             screening = candidate.get("screening") if isinstance(candidate.get("screening"), dict) else {}
-            if screening.get("label") != "exclude":
+            metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+            if screening.get("label") != "exclude" and metadata.get("available_content"):
                 eligible.append(candidate)
-        preferred = max(eligible or selected, key=preference)
+        if not eligible:
+            continue
+        preferred = max(eligible, key=preference)
         collapsed_versions += max(0, len(selected) - 1)
         screenings = [
             candidate.get("screening")
@@ -824,7 +987,7 @@ def command_finalize(args: argparse.Namespace) -> None:
                 if isinstance(discovery, dict) and discovery.get("search_id")
             )
         )
-        queue.append(
+        shortlist.append(
             {
                 **metadata,
                 "roles": roles,
@@ -832,34 +995,36 @@ def command_finalize(args: argparse.Namespace) -> None:
                 "terms": terms,
                 "discovered_by": discovery_ids,
                 "versions": [str(candidate.get("_id")) for candidate in members],
-                "status": "selected-for-ingestion",
+                "status": "shortlisted-for-acquisition",
             }
         )
-    queue.sort(key=lambda item: normalized_title(item.get("title")))
+    shortlist.sort(key=lambda item: normalized_title(item.get("title")))
     target = state.get("target") if isinstance(state.get("target"), dict) else {}
     minimum = args.min_papers if args.min_papers is not None else int(target.get("min", 80))
     maximum = args.max_papers if args.max_papers is not None else int(target.get("max", 100))
     if minimum < 1 or maximum < minimum:
-        raise SeedingError("Invalid final paper target.")
-    if not args.allow_outside_target and not minimum <= len(queue) <= maximum:
+        raise SeedingError("Invalid shortlist target.")
+    if not args.allow_outside_target and not minimum <= len(shortlist) <= maximum:
         raise SeedingError(
-            f"Final selection contains {len(queue)} unique papers; required range is "
+            f"Shortlist contains {len(shortlist)} unique papers; required range is "
             f"{minimum}–{maximum}. Adjust decisions or pass --allow-outside-target explicitly."
         )
-    atomic_write_json(vault / "state" / "queue.json", queue)
+    atomic_write_json(vault / "state" / "shortlist.json", shortlist)
+    atomic_write_json(vault / "state" / "queue.json", [])
     append_log(
         vault / "state" / "search-log.jsonl",
         {
-            "event": "finalize",
+            "event": "shortlist",
             "executed_at": utc_now(),
-            "paper_count": len(queue),
+            "paper_count": len(shortlist),
             "target": {"min": minimum, "max": maximum},
             "outside_target_allowed": bool(args.allow_outside_target),
             "collapsed_selected_versions": collapsed_versions,
-            "selected_ids": [item.get("openalex_id") for item in queue],
+            "selected_ids": [item.get("openalex_id") for item in shortlist],
         },
     )
-    print(f"Finalized {len(queue)} unique papers in {vault / 'state' / 'queue.json'}")
+    print(f"Wrote {len(shortlist)} unique papers to {vault / 'state' / 'shortlist.json'}")
+    print("Final queue cleared; acquisition must validate at least one PDF or XML per paper.")
     print(f"Collapsed duplicate selected versions: {collapsed_versions}")
 
 
@@ -873,13 +1038,28 @@ def add_api_options(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Search OpenAlex and build a screened research-vault seed list."
+        description="Search OpenAlex and build a content-qualified research shortlist."
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    search = commands.add_parser("search", help="Run and log one OpenAlex search.")
+    phrase = commands.add_parser(
+        "set-core-phrase", help="Record the field term used to construct strand searches."
+    )
+    phrase.add_argument("vault", type=Path)
+    phrase.add_argument("--phrase", required=True)
+    phrase.add_argument("--rationale", required=True)
+    phrase.set_defaults(handler=command_set_core_phrase)
+
+    search = commands.add_parser(
+        "search", help="Run availability-qualified PDF/XML OpenAlex searches."
+    )
     search.add_argument("vault", type=Path)
-    search.add_argument("--query", required=True)
+    query_group = search.add_mutually_exclusive_group(required=True)
+    query_group.add_argument("--query", help="Complete query, primarily for terminology reconnaissance.")
+    query_group.add_argument(
+        "--operator",
+        help="Strand expression combined with the recorded core phrase using AND.",
+    )
     search.add_argument("--stage", required=True)
     search.add_argument("--strand", required=True)
     search.add_argument("--rationale", required=True)
@@ -925,14 +1105,14 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true")
     status.set_defaults(handler=command_status)
 
-    finalize = commands.add_parser(
-        "finalize", help="Deduplicate selected versions and write state/queue.json."
+    shortlist = commands.add_parser(
+        "shortlist", help="Deduplicate selected versions and write state/shortlist.json."
     )
-    finalize.add_argument("vault", type=Path)
-    finalize.add_argument("--min-papers", type=int)
-    finalize.add_argument("--max-papers", type=int)
-    finalize.add_argument("--allow-outside-target", action="store_true")
-    finalize.set_defaults(handler=command_finalize)
+    shortlist.add_argument("vault", type=Path)
+    shortlist.add_argument("--min-papers", type=int)
+    shortlist.add_argument("--max-papers", type=int)
+    shortlist.add_argument("--allow-outside-target", action="store_true")
+    shortlist.set_defaults(handler=command_shortlist)
     return parser
 
 

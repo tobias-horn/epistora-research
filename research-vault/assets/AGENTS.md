@@ -2,13 +2,17 @@
 
 This vault separates evidence records from living synthesis. Use `templates/source-note.md` for source notes in `sources/` and `templates/wiki-entry.md` for wiki pages in `wiki/`. Keep Obsidian properties flat, quote wikilinks stored in YAML lists, and keep link properties synchronized with meaningful links in the note body.
 
+## OpenAlex credential
+
+Never ask the user to paste an API key into chat or place one in the vault. Seeding and acquisition automatically discover the user-level credential at `${XDG_CONFIG_HOME:-~/.config}/research-vault/.env`. If it is missing, tell the user to run `python3 scripts/configure_openalex.py` in their own terminal; it prompts without echoing the key and stores it with user-only permissions. Resume after they confirm completion.
+
 ## Initial seeding
 
-Use `scripts/seed_openalex.py` to build the initial paper list. Let the agent interpret the topic, judge relevance, refine independent search strands, and choose anchors; use the script for OpenAlex requests, raw-response storage, exact search logging, candidate merging, version deduplication, and final queue validation. Aim for 80–100 unique papers unless the topic clearly warrants a different size. Do not download papers or create source notes during seeding. `state/candidates.json` is working state, `state/search-log.jsonl` is the search audit trail, and the finalized list belongs in `state/queue.json`.
+Use `scripts/seed_openalex.py` to build the initial shortlist. First test the user's wording against accessible literature, then record the field's core phrase and combine it with focused strand operators. Let the agent judge terminology, relevance, frontier and foundational balance, strands, and anchors; use the script for OpenAlex requests, PDF/XML availability filtering, logging, candidate merging, and version deduplication. Aim for 80–100 relevant papers, weighted toward frontier work. Do not download papers or create source notes during seeding. `state/candidates.json` is working state, `state/search-log.jsonl` is the audit trail, and selected records belong in `state/shortlist.json`.
 
 ## Source acquisition
 
-After the queue is finalized, use `scripts/acquire_openalex.py` to plan and download complete work metadata, OpenAlex-cached PDFs and GROBID TEI XML, and direct external PDFs from OpenAlex Locations marked open access when no cached PDF exists. Review the plan before running paid content requests and always set an explicit maximum cost. Acquisition progress is resumable in `state/acquisition.json`; raw files belong under `raw/works/<OPENALEX_ID>/`. Do not scrape landing pages, bypass access controls, convert full text, or create notes during acquisition.
+After shortlisting, use `scripts/acquire_openalex.py` to plan and download complete metadata plus every available PDF and XML for each paper. Review the plan, set an explicit maximum cost, and use the acquisition `finalize` command to write `state/queue.json` only for papers with at least one validated PDF or downloaded XML. Retain non-empty XML returned by OpenAlex even when its TEI structure is imperfect. If fewer than 80 qualify, add targeted replacements instead of retaining metadata-only papers. Acquisition progress is resumable in `state/acquisition.json`; raw files belong under `raw/works/<OPENALEX_ID>/`. Do not scrape landing pages, bypass access controls, convert full text, or create notes during acquisition.
 
 ## Source notes
 

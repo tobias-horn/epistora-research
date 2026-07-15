@@ -1,22 +1,20 @@
 # Source acquisition
 
-Acquire content only after `state/queue.json` has been finalized. Store complete OpenAlex metadata and prefer OpenAlex-cached PDFs and GROBID TEI XML. When OpenAlex has no cached PDF, use a direct PDF URL from an OpenAlex Location explicitly marked open access. Do not convert text, scrape landing pages, bypass access controls, or create notes.
+Acquire `state/shortlist.json`, then write `state/queue.json` using only papers with a validated PDF or downloaded XML. Do not convert text, scrape landing pages, bypass access controls, or create notes during this stage.
 
-The script reads `OPEN_ALEX` or `OPENALEX_API_KEY` from the environment. It also checks `.env` in the current directory, vault, and vault parent; use `--env-file` when needed. Never put a key in a command, log, or vault file.
+The script checks `OPEN_ALEX`, `OPENALEX_API_KEY`, local `.env` files, and `${XDG_CONFIG_HOME:-~/.config}/research-vault/.env`. Never ask for or put a key in chat, a command argument, a log, or the vault. If missing, tell the user to run `python3 <vault>/scripts/configure_openalex.py` in their own terminal and resume after confirmation.
 
 ## 1. Plan
 
-Refresh complete metadata, save it under `raw/works/<OPENALEX_ID>/`, and calculate cached and external PDF/XML availability:
+Refresh complete metadata and calculate cached and external routes:
 
 ```bash
 python3 <vault>/scripts/acquire_openalex.py plan <vault>
 ```
 
-Planning makes metadata requests but no paid content requests. For PDFs, it chooses an OpenAlex-cached file first; otherwise it checks `best_oa_location.pdf_url` and then other open-access `locations[].pdf_url` values. Review the reported source routes and estimated cost before continuing.
+Planning makes metadata requests but no paid content requests. It prefers OpenAlex-cached PDF content, otherwise a direct PDF URL from an OpenAlex Location marked open access; cached XML is planned independently.
 
-## 2. Download
-
-Download both directly available formats with an explicit maximum cost:
+## 2. Download every available format
 
 ```bash
 python3 <vault>/scripts/acquire_openalex.py run <vault> \
@@ -24,25 +22,35 @@ python3 <vault>/scripts/acquire_openalex.py run <vault> \
   --max-cost-usd 2.00
 ```
 
-OpenAlex currently prices each cached content file separately. Direct external open-access PDF requests are not included in that OpenAlex cost. The command refuses to start if its paid OpenAlex requests exceed the supplied cap. To split downloads across allowance periods, run one format at a time with `--formats pdf` or `--formats xml`.
+The default is also `--formats pdf,xml`. The command attempts every available PDF and XML route for each shortlisted paper and skips unavailable or already valid files. OpenAlex-cached files currently cost $0.01 per file, so a paper with both cached formats can cost $0.02. External direct PDFs do not count toward the OpenAlex cap. If the plan exceeds the chosen ceiling, increase the explicit cap or reduce the shortlist before running.
 
-Each paper is stored as:
+Files are stored under:
 
 ```text
 raw/works/W123/
 ├── metadata.openalex.json
-├── paper.pdf                 # OpenAlex cache or an external OA location
-└── fulltext.tei.xml          # when OpenAlex has a GROBID parse
+├── paper.pdf
+└── fulltext.tei.xml
 ```
 
-Downloads are validated, checksummed, written atomically, and recorded after every attempt in `state/acquisition.json`. The state records whether a file came from the OpenAlex content API or an external OA location without copying temporary external URLs out of the saved metadata. Valid existing files are skipped. A failed file does not stop the remaining requests; rerun the command to retry it under a new cost cap.
+PDFs are validated before retention. XML is decompressed when needed and retained whenever OpenAlex returns a non-empty file, even if its TEI structure is noncanonical or imperfect. Downloads are checksummed, written atomically, and recorded after each attempt in `state/acquisition.json`. Existing files are skipped. A failed file does not stop the remaining downloads; rerun under a new explicit cost cap when appropriate.
 
-External fallback is deliberately limited to direct `http` or `https` PDF URLs that OpenAlex marks open access. If a host returns HTML, blocks automated access, or exposes only a landing page, record the failure and leave the paper unavailable; do not add provider-specific scraping.
+External retrieval is deliberately limited to the first direct `http` or `https` PDF URL that OpenAlex marks open access. If it returns HTML, blocks automation, or exposes only a landing page, leave that paper unqualified. Do not add provider-specific scraping.
 
-## 3. Check status
+## 3. Finalize the retained queue
+
+Check progress:
 
 ```bash
 python3 <vault>/scripts/acquire_openalex.py status <vault>
 ```
 
-Run `plan` again if the finalized queue changes or when current availability needs to be refreshed. Downloaded PDFs retain their original copyright; a recorded license or open-access flag is provenance information, not a grant of additional rights.
+Finalize when 80–100 shortlisted papers have at least one retained artifact:
+
+```bash
+python3 <vault>/scripts/acquire_openalex.py finalize <vault>
+```
+
+If fewer than 80 qualify, return to seeding, add targeted replacements, rebuild the shortlist, and refresh the acquisition plan. Do not retain metadata-only papers in the final queue. Use `--allow-outside-target` only when the topic genuinely has fewer accessible relevant sources and record the reason in `state/research.md`.
+
+Downloaded files retain their original copyright. License and open-access fields are provenance, not additional permission.
