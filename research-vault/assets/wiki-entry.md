@@ -1,51 +1,55 @@
 ---
 type: wiki
+wiki_id:
 title:
 aliases: []
 kind:
+status: developing
 description:
 sources: []
-related: []
 ---
 
 # {{TITLE}}
 
 > [!abstract] In brief
-> {{Explain the idea and why it matters to the research topic in two or three sentences.}}
+> {{Define the idea and explain why it matters in two or three sentences.}}
 
-## Synthesis
+## Scope and distinctions
 
-<!-- Integrate ideas across papers rather than summarizing papers sequentially. Cite source notes near the claims they support. -->
+{{State what the page includes, what it excludes, and the nearest concepts it must not be conflated with.}}
 
-{{Explain the current understanding, relevant mechanisms, interpretations, and distinctions in a coherent narrative.}}
+## Current synthesis
 
-## Evidence and uncertainty
+<!-- Keep this readable and compact. Integrate the propositions below; do not summarize papers in sequence. -->
 
-### {{PROPOSITION_OR_POSITION}}
+{{Explain the current understanding, mechanisms, important tensions, and practical significance.}}
 
-- **Evidence:**
-- **Challenges or qualifiers:**
-- **Boundary conditions:**
-- **Assessment:** convergent | mixed | tentative | speculative
+## Propositions
 
-<!-- Add another proposition block only for a materially different claim. -->
+### P1 — {{SHORT_PROPOSITION_LABEL}}
+
+- **Statement:** {{One independently updateable assertion.}} ^p-{{WIKI_ID}}-01
+- **Evidence pattern:** convergent | mixed | contested | sparse | single-source | not-assessed
+- **Assessment:** {{Explain the appraisal; do not substitute a score for reasoning.}}
+- **Scope:** {{Population, task, setting, time, model, or other boundary conditions.}}
+- **Supports:** [[Source note#^c-source-id-01|Source, C1]]
+- **Challenges:**
+- **Qualifies:**
+- **Illustrated-by:**
+- **Update triggers:** {{Evidence that would materially change this proposition.}}
+
+<!-- Add another proposition only for a materially different assertion. Split the page when propositions no longer share one scope and source neighborhood. -->
 
 ## Connections
 
-<!-- Use relational statements with wikilinks, not an unstructured see-also list. Keep related in the frontmatter synchronized. -->
+<!-- Use one approved relation per line: broader-than, narrower-than, part-of, causes, mediates, moderates, supports, challenges, operationalized-by, measured-by, applied-in, distinguished-from, prerequisite-for, or informs. -->
 
-- {{State how this idea influences, depends on, enables, or contrasts with a related wiki page.}}
+- **distinguished-from** → [[Related concept]] — {{Explain the distinction or relation.}}
 
-## Implications and open questions
+## Implications
 
-> [!tip] Synthesis hypothesis
-> **Hypothesis:** {{State a novel but grounded proposition.}}
->
-> **Grounding:**
->
-> **Reasoning:** {{Explain how the existing evidence suggests the hypothesis.}}
->
-> **How it could be tested:** {{Name a concrete observation, experiment, or analysis.}}
+-
 
-> [!question] Open question
-> {{State an unresolved question and explain what answering it would change.}}
+## Open questions
+
+-

@@ -39,3 +39,7 @@ The XML parser accepts canonical TEI and OpenAlex's wrapped, lowercase, or flat 
 ## Validate
 
 Inspect `state/parsing-summary.json` and `state/parsing.json`. Investigate every failed work and every work with `review_required: true`. Sample Markdown across publishers, especially tables, formulas, headings, citations, and figure captions. Do not silently repair uncertain text or merge XML and PDF into an untraceable third version.
+
+## Handoff
+
+Parsing is ready for source-note extraction when every queued work is parsed or explicitly unresolved and every review-required result has been examined. Unless the user requested parsing only, compare successfully parsed OpenAlex IDs with source-note `openalex_id` values and begin with the first missing batch.

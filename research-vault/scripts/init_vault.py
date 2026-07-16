@@ -22,6 +22,7 @@ ASSET_FILES = (
     "wiki.base",
     "queue.json",
     "shortlist.json",
+    "access-gaps.json",
     "source-note.md",
     "wiki-entry.md",
 )
@@ -41,6 +42,7 @@ REQUIRED_FILES = (
     "AGENTS.md",
     "CLAUDE.md",
     "PARSING.md",
+    "WIKI.md",
     "sources.base",
     "wiki.base",
     "state/research.md",
@@ -48,6 +50,7 @@ REQUIRED_FILES = (
     "state/acquisition.json",
     "state/parsing.json",
     "state/shortlist.json",
+    "state/access-gaps.json",
     "state/queue.json",
     "state/search-log.jsonl",
     "templates/source-note.md",
@@ -57,6 +60,7 @@ REQUIRED_FILES = (
     "scripts/configure_openalex.py",
     "scripts/process_sources.py",
     "scripts/parse_sources.py",
+    "scripts/build_wiki_index.py",
 )
 
 
@@ -118,7 +122,7 @@ def validate_assets(assets_dir: Path) -> None:
             "and one {{TOPIC_YAML}} placeholder."
         )
 
-    for name in ("queue.json", "shortlist.json"):
+    for name in ("queue.json", "shortlist.json", "access-gaps.json"):
         try:
             json.loads((assets_dir / name).read_text(encoding="utf-8"))
         except json.JSONDecodeError as error:
@@ -132,6 +136,7 @@ def validate_assets(assets_dir: Path) -> None:
             "configure_openalex.py",
             "process_sources.py",
             "parse_sources.py",
+            "build_wiki_index.py",
         )
         if not (assets_dir.parent / "scripts" / name).is_file()
     ]
@@ -139,8 +144,16 @@ def validate_assets(assets_dir: Path) -> None:
         raise InitializationError(
             "The skill installation is missing scripts: " + ", ".join(missing_scripts)
         )
-    if not (assets_dir.parent / "references" / "parsing.md").is_file():
-        raise InitializationError("The skill installation is missing references/parsing.md.")
+    missing_references = [
+        name
+        for name in ("parsing.md", "wiki-building.md")
+        if not (assets_dir.parent / "references" / name).is_file()
+    ]
+    if missing_references:
+        raise InitializationError(
+            "The skill installation is missing references: "
+            + ", ".join(missing_references)
+        )
 
 
 def render_research(template: str, topic: str) -> str:
@@ -162,6 +175,9 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
     for name in (".gitignore", "AGENTS.md", "CLAUDE.md", "sources.base", "wiki.base"):
         shutil.copyfile(assets_dir / name, vault / name)
     shutil.copyfile(assets_dir.parent / "references" / "parsing.md", vault / "PARSING.md")
+    shutil.copyfile(
+        assets_dir.parent / "references" / "wiki-building.md", vault / "WIKI.md"
+    )
 
     research_template = (assets_dir / "research.md.template").read_text(
         encoding="utf-8"
@@ -173,6 +189,9 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
     shutil.copyfile(assets_dir / "queue.json", vault / "state" / "queue.json")
     shutil.copyfile(
         assets_dir / "shortlist.json", vault / "state" / "shortlist.json"
+    )
+    shutil.copyfile(
+        assets_dir / "access-gaps.json", vault / "state" / "access-gaps.json"
     )
     (vault / "state" / "candidates.json").write_text(
         json.dumps(
@@ -235,6 +254,7 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         "configure_openalex.py",
         "process_sources.py",
         "parse_sources.py",
+        "build_wiki_index.py",
     ):
         destination = vault / "scripts" / name
         shutil.copyfile(assets_dir.parent / "scripts" / name, destination)
@@ -276,6 +296,17 @@ def validate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         ) from error
     if shortlist != []:
         raise InitializationError("state/shortlist.json must start as an empty JSON array.")
+
+    try:
+        access_gaps = json.loads(
+            (vault / "state" / "access-gaps.json").read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError as error:
+        raise InitializationError(
+            f"state/access-gaps.json is not valid JSON: {error}"
+        ) from error
+    if access_gaps != []:
+        raise InitializationError("state/access-gaps.json must start as an empty JSON array.")
 
     try:
         candidates = json.loads(

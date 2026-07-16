@@ -33,22 +33,26 @@ related_sources: []
 - **Study or argument type:**
 - **Context, population, or data:**
 - **Approach:**
+- **Comparators and baselines:**
+- **Outcomes or constructs:**
 
 ## Main claims and evidence
 
 ### C1 — {{SHORT_CLAIM_LABEL}}
 
-- **Claim:**
-- **Evidence or reasoning:**
-- **Scope and conditions:**
-- **Locator:**
+- **Claim:** {{A claim attributable to this source.}} ^c-{{SOURCE_ID}}-01
+- **Evidence or reasoning:** {{Result, data, analysis, or argument used by the source.}}
+- **Scope and conditions:** {{Population, task, setting, time, assumptions, and boundary conditions.}}
+- **Locator:** {{Resolvable section, page, figure, table, or paragraph location.}}
+- **Evidence type:** primary-result | secondary-analysis | author-interpretation | formal-analysis | conceptual-argument
 
 ### C2 — {{SHORT_CLAIM_LABEL}}
 
-- **Claim:**
+- **Claim:** {{A second materially different claim.}} ^c-{{SOURCE_ID}}-02
 - **Evidence or reasoning:**
 - **Scope and conditions:**
 - **Locator:**
+- **Evidence type:**
 
 ## Limitations and uncertainty
 
@@ -58,7 +62,10 @@ related_sources: []
 
 ### Vault assessment
 
--
+- **Design or bias concerns:**
+- **Directness to the vault question:**
+- **Precision or information size:**
+- **Independence concerns:** {{Shared sample, dataset, author group, or prior report.}}
 - **What would change the interpretation:**
 
 ## Connections

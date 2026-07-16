@@ -1,11 +1,29 @@
 ---
 name: research-vault
-description: Initialize, seed, acquire, and parse sources for an Obsidian-compatible scientific research vault. Use when Codex needs to create a research second brain, literature vault, source-note collection, or connected concept wiki; discover and screen relevant OpenAlex papers; download every available PDF and XML under a cost cap; or convert imperfect OpenAlex XML and scientific PDFs into clean, provenance-backed Markdown with a custom XML parser and Docling fallback.
+description: Initialize, seed, acquire, parse, and synthesize an Obsidian-compatible scientific research vault. Use when Codex needs to create a research second brain, literature vault, source-note collection, or connected concept wiki; discover and screen relevant OpenAlex papers; download every available PDF and XML under a cost cap; convert imperfect OpenAlex XML and scientific PDFs into clean Markdown; or build claim-addressable wiki pages and a derived agent retrieval index with explicit provenance, disagreement, and uncertainty.
 ---
 
 # Research Vault
 
-Create a self-contained vault, build its initial scientific source list, acquire available source files, and convert retained papers into clean Markdown with provenance. Use bundled scripts for filesystem, API, environment, and parsing operations instead of reproducing them manually.
+Create a self-contained vault, build its scientific source set, acquire and parse available reports, extract claim-addressable source notes, and synthesize a connected wiki with provenance. Use bundled scripts for filesystem, API, environment, parsing, validation, and index-building operations instead of reproducing them manually.
+
+## Orchestrate the complete workflow
+
+Act as the workflow orchestrator. The bundled scripts perform deterministic operations; they do not run the research process themselves. For a request to build a complete vault, continue through initialization, discovery and screening, shortlisting, acquisition, parsing, source-note creation, batched wiki synthesis, validation, and final audit. A successful command completes one operation, not the whole task.
+
+Stop only when the requested scope is complete or progress requires user action, such as configuring a credential, approving acquisition cost, supplying inaccessible material, or resolving a consequential scope decision. If the user requests only one stage, perform only that stage and its necessary validation.
+
+Before acting in an existing vault, inspect the research frame and existing state, Markdown, source notes, wiki pages, and derived index. Resume at the earliest incomplete stage. Preserve completed work; do not reinitialize, reseed, reacquire, or force reparsing unless its state is invalid or the research scope changed.
+
+Use the existing artifacts as progress state. Move forward when:
+
+- discovery has a framed question, screened source set, coverage assessment, and stopping rationale;
+- shortlisting preserves both the accessible acquisition set and selected access gaps;
+- acquisition has attempted the intended routes and finalized a non-empty retained queue;
+- every queued work is parsed or explicitly unresolved and every review flag has been handled;
+- every successfully parsed work has one source note with the matching OpenAlex ID and usable claim blocks;
+- every completed source-note batch has been compared with the existing wiki and relevant pages have been created or updated;
+- validation passes, the index is rebuilt, access gaps remain explicit, and the competency questions are answerable or explicitly unresolved.
 
 ## Initialize a vault
 
@@ -38,7 +56,7 @@ Read `references/seeding.md` completely before starting or resuming OpenAlex see
 
 Use agent judgment for topic interpretation, terminology reconnaissance, core-phrase choice, relevance screening, query refinement, anchor selection, source-set balance, and stopping decisions. Use `<vault>/scripts/seed_openalex.py` for every OpenAlex request, raw response, search-log entry, candidate update, core-phrase record, screening decision, status calculation, version deduplication, and shortlist write.
 
-First test the user's wording and field terminology, then record the phrase actually used by the literature. Build strand queries by combining that core phrase with one focused operator. Search only records for which OpenAlex reports a cached PDF, cached GROBID XML, or a direct open-access PDF URL. Aim for an 80–100-paper shortlist weighted toward frontier work with only the foundational background needed to understand it.
+First test the user's wording and field terminology, then record the phrase actually used by the literature. Build strand queries by combining that core phrase with one focused operator. Use `content-qualified` access for an immediately downloadable exploratory vault and explicitly disclose its access bias. Use `comprehensive` discovery when evidential eligibility must not depend on full-text access; selected access gaps then require lawful user-supplied files or explicit unresolved-gap reporting. Aim for roughly 80–100 retained sources only when that covers the competency questions; systematic modes use protocol-defined sensitivity and stopping rules instead.
 
 During this stage:
 
@@ -46,6 +64,7 @@ During this stage:
 - do not create source notes or wiki entries;
 - do not interpret OpenAlex's raw match count as eligible literature;
 - do not select solely by citation count, rank, or recency;
+- do not collapse relevance, design, recency, citations, venue, and access into one quality score;
 - preserve exact search rationale and exclusion reasons.
 
 ## Acquire the finalized sources
@@ -72,6 +91,27 @@ The command creates an ignored vault-local environment, installs the pinned pars
 
 Prefer usable XML because it is much faster and usually has better semantic structure. Invoke Docling when XML is absent, cannot be parsed, is very short, lacks section structure, or appears to contain the wrong paper. Preserve original downloads under `raw/` and write exactly one selected representation per paper to `markdown/<OPENALEX_ID>.md`. Keep checksums, parser versions, routing reasons, warnings, and timing in `state/parsing.json`, not beside the Markdown. Inspect every failed or review-recommended work; never invent missing text or call raw GROBID formula text validated LaTeX.
 
+## Build source notes and the wiki
+
+Read `references/wiki-building.md` completely before creating or updating source claims, wiki pages, or the derived claim index.
+
+Compare successfully parsed OpenAlex IDs with the `openalex_id` properties in `sources/`. Select a manageable group without source notes, read each parsed paper, and consult the raw source for consequential or ambiguous passages. Create one source note per report with `templates/source-note.md`; use `study_id` to join reports from the same underlying study. Extract only vault-relevant claims and give every claim its evidence or reasoning, scope, resolvable locator, evidence type, and stable block ID.
+
+After a coherent batch—normally 10–20 completed source notes or one finished search strand—compare its claims with the existing wiki. Search identities, aliases, definitions, and propositions before deciding to update, create, merge, redirect, or leave a paper-specific idea in its source note. A wiki page represents one independently reusable idea. Draft scoped proposition blocks with claim-level evidence links before writing the readable narrative. Preserve counterevidence, construct differences, study dependence, boundary conditions, and uncertainty; do not weight truth by paper count, citations, venue, or recency.
+
+Validate and rebuild the index after each batch, then continue with the next parsed works lacking source notes. Repeat until every successfully parsed report has a source note and every completed source-note batch has received a wiki synthesis pass.
+
+Markdown remains canonical and human-editable in Obsidian. Validate it and build the agent-native, derived JSONL retrieval index with:
+
+```bash
+python3 scripts/build_wiki_index.py . --check
+python3 scripts/build_wiki_index.py .
+```
+
+Repair every validation error. Agents may use `state/wiki-index.jsonl` to retrieve candidate propositions and claim blocks, but must open the Markdown for context before making consequential claims. Keep structured effect-size extractions and forecast records in separate analytical layers; narrative wiki pages are not substitutes for reproducible meta-analysis data or append-only forecasts.
+
+The validator checks the notes that exist; it does not prove that all parsed reports have source notes, that the knowledge layer is non-empty, or that synthesis is complete. Before calling a full vault complete, reconcile the finalized queue with parsed Markdown, successfully parsed OpenAlex IDs with source-note `openalex_id` values, and completed source-note batches with wiki synthesis passes.
+
 ## Bundled resources
 
 - `scripts/init_vault.py`: Validate, create, render, verify, and atomically install a vault.
@@ -80,7 +120,9 @@ Prefer usable XML because it is much faster and usually has better semantic stru
 - `scripts/acquire_openalex.py`: Refresh shortlist metadata, download OpenAlex-cached content or a direct external OA PDF, and finalize the retained queue under an explicit cost cap.
 - `scripts/process_sources.py`: Create the local parser runtime and run the complete parsing stage.
 - `scripts/parse_sources.py`: Parse imperfect XML, run Docling PDF fallback, choose the clean Markdown variant, and record diagnostics.
+- `scripts/build_wiki_index.py`: Validate stable source claims, wiki propositions, evidence links, source-property synchronization, and typed relations; build a derived JSONL retrieval index.
 - `references/seeding.md`: Agent workflow, command examples, judgment boundaries, and stopping guidance.
 - `references/acquisition.md`: Acquisition commands, storage contract, cost guardrail, and retry guidance.
 - `references/parsing.md`: Parser behavior, output layout, validation, and recovery guidance.
+- `references/wiki-building.md`: Epistemic design, page-creation rules, source/report/study distinctions, proposition workflow, uncertainty, typed relations, validation, and downstream meta-analysis/forecasting boundaries.
 - `assets/`: Files copied into each vault. The initializer renders the topic and creates empty seeding state.

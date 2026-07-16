@@ -11,12 +11,12 @@ properties:
     displayName: Page
   kind:
     displayName: Kind
+  status:
+    displayName: Status
   description:
     displayName: Description
   sources:
     displayName: Sources
-  related:
-    displayName: Related
   file.mtime:
     displayName: Updated
 
@@ -26,7 +26,7 @@ views:
     order:
       - formula.page
       - note.kind
+      - note.status
       - note.description
       - note.sources
-      - note.related
       - file.mtime

@@ -19,6 +19,8 @@ properties:
     displayName: Type
   study_design:
     displayName: Study design
+  study_id:
+    displayName: Study
   concepts:
     displayName: Concepts
   is_retracted:
@@ -34,5 +36,6 @@ views:
       - note.venue
       - note.work_type
       - note.study_design
+      - note.study_id
       - note.concepts
       - note.is_retracted

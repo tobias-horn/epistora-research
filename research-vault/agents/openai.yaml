@@ -1,4 +1,4 @@
 interface:
   display_name: "Research Vault"
-  short_description: "Build and parse an OpenAlex research vault"
-  default_prompt: "Use $research-vault to create a vault, acquire every available PDF and XML for 80–100 relevant sources, and parse them into clean Markdown."
+  short_description: "Build an evidence-backed, agent-native research vault"
+  default_prompt: "Use $research-vault to discover, acquire, parse, and synthesize an Obsidian-compatible research vault with claim-level provenance and a derived agent index."

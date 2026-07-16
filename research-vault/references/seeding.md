@@ -1,6 +1,6 @@
 # Initial OpenAlex seeding
 
-Build a relevant, content-qualified shortlist before downloading papers. Aim for 80–100 unique papers, weighted toward the research frontier with only the foundational work needed to understand it.
+Build an auditable candidate universe before downloading papers. For an exploratory vault, aim for roughly 80–100 retained full-text sources when that is enough to cover the competency questions. For systematic or living evidence work, protocol-defined eligibility and sensitivity take precedence over a source-count target.
 
 Use agent judgment for topic interpretation, terminology, relevance, strands, anchors, balance, and stopping. Use `scripts/seed_openalex.py` for OpenAlex requests, availability filtering, logging, candidate state, decisions, version grouping, and shortlist creation.
 
@@ -8,7 +8,14 @@ Never ask for or put an API key in chat, a command argument, a log, or the vault
 
 ## 1. Frame the topic
 
-Update `state/research.md` with the intended question, breadth, important mechanisms or outcomes, counterevidence worth seeking, and justified exclusions. Treat this as provisional search guidance.
+Update `state/research.md` with the evidence mode, intended question, competency questions, breadth, important mechanisms or outcomes, counterevidence worth seeking, and justified exclusions. Treat this as provisional search guidance.
+
+Choose the access policy explicitly:
+
+- `content-qualified` retrieves only records with an OpenAlex-cached PDF/XML or a direct open-access PDF. Use it for a bounded exploratory vault that must be immediately downloadable, and disclose the resulting access bias.
+- `comprehensive` discovers records regardless of current full-text access. Use it when evidential eligibility must not depend on access, including systematic-review-like work. Selected inaccessible records are written to `state/access-gaps.json` at shortlisting and require a lawful user-supplied copy or an explicitly documented unresolved gap.
+
+Do not combine relevance, citation count, venue, recency, and access into one quality score. Use relevance for screening and treat the remaining fields as separate constraints or diagnostics. Venue and citations may help locate landmarks but are not evidence-quality labels.
 
 ## 2. Discover the field's terminology
 
@@ -23,10 +30,11 @@ python3 <vault>/scripts/seed_openalex.py search <vault> \
   --stage terminology \
   --strand user-wording \
   --rationale "Test the user's wording and identify the field's terminology" \
-  --query "partial cellular reprogramming rejuvenation aging"
+  --query "partial cellular reprogramming rejuvenation aging" \
+  --access-policy content-qualified
 ```
 
-Every search runs three deterministic lanes and merges them: cached PDF, cached GROBID XML, and open-access records with a direct PDF URL. Landing-page-only and metadata-only records are not added as candidates.
+With `content-qualified`, every search runs three deterministic lanes and merges them: cached PDF, cached GROBID XML, and open-access records with a direct PDF URL. With `comprehensive`, one unqualified discovery lane is used and access is recorded as metadata rather than an eligibility rule.
 
 Review the relevant titles, abstracts, keywords, and recurring phrases. Choose a core phrase that is specific enough for precision but common enough to retrieve the field. Record why it was chosen:
 
@@ -61,7 +69,7 @@ The script also requires the core phrase in the title or abstract for strand sea
 
 Start frontier coverage with roughly the last five years and adjust when the field moves unusually quickly or slowly. Keep relevance ranking for normal searches. Use newest-first only for a tightly scoped recent strand.
 
-Retain a strand when it finds at least five new core or supporting papers or fills a clear gap. Reformulate or retire it when fewer than roughly 20 percent of reviewed results are relevant or it adds almost no unique work.
+Retain a strand when it finds new relevant studies or fills a competency-question, design, population, temporal, or counterevidence gap. Reformulate or retire it when screened precision is persistently poor. Stop repeating near-equivalent queries when marginal relevant yield is low and pairwise overlap is high; log both the new-study yield and the reason the remaining gaps are acceptable.
 
 ## 4. Screen candidates
 
@@ -112,16 +120,27 @@ python3 <vault>/scripts/seed_openalex.py expand-anchor <vault> \
   --strand review-citation-neighborhood \
   --rationale "Recover accessible landmarks and recent citing work" \
   --from-year 2022 \
-  --recent-citing 20
+  --recent-citing 20 \
+  --access-policy content-qualified
 ```
 
 The script retains only references and citing works with a PDF or XML route. An inaccessible anchor may guide discovery but cannot enter the shortlist.
 
 ## 6. Balance and shortlist
 
-For a typical vault, use roughly 55–65 percent frontier work, 20–30 percent current core or connective evidence, and 10–20 percent foundations. Adapt this to the topic rather than forcing quotas. Prefer an accessible preprint or working-paper version when a published version is unavailable.
+Define minimum coverage constraints from the research frame rather than using a universal weighted score or fixed literature quotas. Inspect at least:
 
-Stop when 80–100 relevant papers cover the intended strands and two successive refinements produce little unique relevant work. Do not pad the set. Check progress with:
+- every competency question and search strand;
+- primary studies, syntheses, methods, foundations, frontier work, and critical/counterevidence where relevant;
+- study-design, population, setting, outcome, and disciplinary diversity;
+- author, institution, venue, and topic concentration;
+- temporal coverage and terminology drift;
+- duplicate versions, reports of one study, shared datasets, and overlapping samples;
+- accessible versus selected-but-inaccessible evidence.
+
+Adapt the balance to the evidence ecology. A mature intervention question may need older primary trials and risk-of-bias material; a fast technical topic may need recent preprints; a conceptual question may rely more on foundational and critical work. Prefer a published version when available, but retain an accessible preprint or working-paper version when it is the only lawful full text and record the version relationship.
+
+For exploratory work, stop when the competency questions and declared constraints are covered and two successive refinements produce little unique relevant work. Do not pad the set to reach 80–100. For systematic work, use a protocol-defined search and screening stopping rule; search saturation alone does not establish recall. Check progress with:
 
 ```bash
 python3 <vault>/scripts/seed_openalex.py status <vault>
@@ -135,6 +154,12 @@ python3 <vault>/scripts/seed_openalex.py shortlist <vault>
 
 This writes `state/shortlist.json` and clears `state/queue.json`. The final queue is created only after acquisition validates at least one PDF or XML per paper.
 
+The command also writes `state/access-gaps.json`. In comprehensive mode, this file is part of the evidence audit: inaccessible studies remain relevant to the assessment even though they cannot enter the parsing queue until a lawful full text is supplied.
+
 ## Audit expectations
 
 Preserve exact queries, availability lanes, filters, sort, rationale, timestamps, result counts, candidate IDs, the chosen core phrase, screening decisions, version relationships, coverage, and stopping rationale. Use `state/search-log.jsonl` for the machine trail and `state/research.md` for the concise human-readable strategy.
+
+## Handoff
+
+After screening, coverage assessment, and a justified stopping decision, write the shortlist. Unless the user requested discovery only, continue to acquisition; candidate retrieval by itself does not complete a vault build.

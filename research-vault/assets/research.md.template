@@ -9,6 +9,14 @@ status: initialized
 
 Use this section to record the interpreted question, intended breadth, important dimensions, and any justified exclusions before seeding.
 
+- Evidence mode: exploratory | systematic | living
+- Intended decisions or uses:
+- Competency questions the vault must answer:
+- Included populations, settings, and evidence types:
+- Exclusions:
+- Known construct or terminology collisions:
+- Required counterevidence:
+
 ## Initial seeding
 
 - Target: 80–100 unique papers, adjusted when the topic warrants it
@@ -18,7 +26,17 @@ Use this section to record the interpreted question, intended breadth, important
 - Core-phrase rationale:
 - Active search strands:
 - Anchor sources:
+- Source-role and design constraints:
+- Access gaps and user-supplied sources needed:
 - Coverage gaps:
 - Stopping rationale:
 
-`state/search-log.jsonl` records exact OpenAlex operations, `state/candidates.json` holds discovered and screened works, and `state/shortlist.json` holds the acquisition set. `state/queue.json` receives only papers with a validated PDF or downloaded XML after acquisition.
+## Synthesis readiness
+
+- Parsing complete:
+- Source-note batch status:
+- Study/report duplicates resolved:
+- Wiki competency-question baseline:
+- Last evidence review:
+
+`state/search-log.jsonl` records exact OpenAlex operations, `state/candidates.json` holds discovered and screened works, `state/shortlist.json` holds the acquisition set, and `state/access-gaps.json` records evidentially selected works without a current content route. `state/queue.json` receives only papers with a validated PDF or downloaded XML after acquisition.

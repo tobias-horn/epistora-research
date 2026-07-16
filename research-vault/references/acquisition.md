@@ -54,3 +54,7 @@ python3 <vault>/scripts/acquire_openalex.py finalize <vault>
 If fewer than 80 qualify, return to seeding, add targeted replacements, rebuild the shortlist, and refresh the acquisition plan. Do not retain metadata-only papers in the final queue. Use `--allow-outside-target` only when the topic genuinely has fewer accessible relevant sources and record the reason in `state/research.md`.
 
 Downloaded files retain their original copyright. License and open-access fields are provenance, not additional permission.
+
+## Handoff
+
+After the intended routes have been attempted, inspect failures and access gaps and finalize the retained queue. Unless the user requested acquisition only, continue to parsing when the queue is non-empty and remaining acquisition failures are understood.

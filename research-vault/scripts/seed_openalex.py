@@ -471,7 +471,12 @@ def command_search(args: argparse.Namespace) -> None:
         if core_phrase is not None
         else None
     )
-    for lane, availability_filter in AVAILABILITY_FILTERS.items():
+    lane_filters = (
+        {"all-records": None}
+        if args.access_policy == "comprehensive"
+        else AVAILABILITY_FILTERS
+    )
+    for lane, availability_filter in lane_filters.items():
         search_filter = build_filter(
             ",".join(
                 part
@@ -497,7 +502,12 @@ def command_search(args: argparse.Namespace) -> None:
             raise SeedingError("OpenAlex search response is missing results.")
         returned_by_lane[lane] = 0
         for rank, raw_work in enumerate(results, 1):
-            if not isinstance(raw_work, dict) or not content_availability(raw_work):
+            if not isinstance(raw_work, dict):
+                continue
+            if (
+                args.access_policy == "content-qualified"
+                and not content_availability(raw_work)
+            ):
                 continue
             returned_by_lane[lane] += 1
             identifier = raw_work.get("id")
@@ -541,6 +551,7 @@ def command_search(args: argparse.Namespace) -> None:
         "filters": filters,
         "per_page_per_lane": args.per_page,
         "sort": sort_value,
+        "access_policy": args.access_policy,
     }
     saved = save_raw(vault, search_id, request_data, responses)
     append_log(
@@ -556,6 +567,7 @@ def command_search(args: argparse.Namespace) -> None:
             "strand_operator": args.operator,
             "filters": filters,
             "sort": request_data["sort"],
+            "access_policy": args.access_policy,
             "executed_at": utc_now(),
             "total_results_by_lane": totals,
             "qualified_results_by_lane": returned_by_lane,
@@ -615,7 +627,10 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
             payload = request_json("works", params, api_key)
             raw_responses["reference_batches"].append(payload)  # type: ignore[union-attr]
             for rank, raw_work in enumerate(payload.get("results") or [], 1):
-                if isinstance(raw_work, dict) and content_availability(raw_work):
+                if isinstance(raw_work, dict) and (
+                    args.access_policy == "comprehensive"
+                    or content_availability(raw_work)
+                ):
                     merged.append(
                         merge_work(
                             state,
@@ -642,7 +657,10 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
         recent = request_json("works", params, api_key)
         raw_responses["recent_citing"] = recent
         for rank, raw_work in enumerate(recent.get("results") or [], 1):
-            if isinstance(raw_work, dict) and content_availability(raw_work):
+            if isinstance(raw_work, dict) and (
+                args.access_policy == "comprehensive"
+                or content_availability(raw_work)
+            ):
                 recent_ids.append(
                     merge_work(
                         state,
@@ -656,7 +674,9 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
                         },
                     )
                 )
-    if isinstance(anchor, dict) and content_availability(anchor):
+    if isinstance(anchor, dict) and (
+        args.access_policy == "comprehensive" or content_availability(anchor)
+    ):
         merge_work(
             state,
             anchor,
@@ -683,6 +703,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
             "references": not args.no_references,
             "recent_citing": args.recent_citing,
             "from_year": args.from_year,
+            "access_policy": args.access_policy,
         },
         raw_responses,
     )
@@ -696,6 +717,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
             "rationale": args.rationale,
             "anchor_id": anchor_url,
             "anchor_title": anchor.get("display_name"),
+            "access_policy": args.access_policy,
             "executed_at": utc_now(),
             "reference_records": len(set(merged)),
             "recent_citing_records": len(set(recent_ids)),
@@ -864,7 +886,7 @@ def command_status(args: argparse.Namespace) -> None:
     assert isinstance(works, dict)
     labels = Counter()
     stages = Counter()
-    abstracts = pdfs = xmls = selected_records = 0
+    abstracts = pdfs = xmls = selected_records = inaccessible_records = 0
     for candidate in works.values():
         if not isinstance(candidate, dict):
             continue
@@ -875,12 +897,25 @@ def command_status(args: argparse.Namespace) -> None:
         abstracts += int(bool(metadata.get("abstract")))
         pdfs += int(bool(metadata.get("has_pdf")))
         xmls += int(bool(metadata.get("has_xml")))
+        inaccessible_records += int(not bool(metadata.get("available_content")))
         for discovery in candidate.get("discovered_by") or []:
             if isinstance(discovery, dict):
                 stages[str(discovery.get("stage") or "unknown")] += 1
     groups = grouped_candidates(works)
     selected_groups = sum(
         any(bool(candidate.get("selected")) for candidate in members)
+        for members in groups.values()
+    )
+    selected_access_gap_groups = sum(
+        any(bool(candidate.get("selected")) for candidate in members)
+        and not any(
+            bool(
+                (candidate.get("metadata") or {}).get("available_content")
+                if isinstance(candidate.get("metadata"), dict)
+                else False
+            )
+            for candidate in members
+        )
         for members in groups.values()
     )
     summary = {
@@ -894,6 +929,8 @@ def command_status(args: argparse.Namespace) -> None:
         "abstracts_available": abstracts,
         "pdfs_reported": pdfs,
         "xmls_reported": xmls,
+        "candidate_records_without_content_route": inaccessible_records,
+        "selected_unique_papers_without_content_route": selected_access_gap_groups,
         "core_phrase": state.get("core_phrase"),
         "discovery_occurrences_by_stage": dict(sorted(stages.items())),
     }
@@ -910,6 +947,10 @@ def command_status(args: argparse.Namespace) -> None:
     else:
         print("Core phrase: not set")
     print(f"Abstracts: {abstracts}; PDFs reported: {pdfs}; XML reported: {xmls}")
+    print(
+        f"Access gaps: {inaccessible_records} candidate records; "
+        f"{selected_access_gap_groups} selected unique papers"
+    )
     print(f"Discovery occurrences: {dict(sorted(stages.items()))}")
 
 
@@ -931,6 +972,7 @@ def command_shortlist(args: argparse.Namespace) -> None:
     works = state["works"]
     assert isinstance(works, dict)
     shortlist = []
+    access_gaps = []
     collapsed_versions = 0
     for members in grouped_candidates(works).values():
         selected = [
@@ -949,6 +991,18 @@ def command_shortlist(args: argparse.Namespace) -> None:
             if screening.get("label") != "exclude" and metadata.get("available_content"):
                 eligible.append(candidate)
         if not eligible:
+            access_gaps.append(
+                {
+                    "version_key": selected[0].get("version_key"),
+                    "selected_ids": [str(candidate.get("_id")) for candidate in selected],
+                    "title": (
+                        selected[0].get("metadata") or {}
+                    ).get("title")
+                    if isinstance(selected[0].get("metadata"), dict)
+                    else None,
+                    "reason": "Selected as evidentially relevant but no PDF or XML route is currently available.",
+                }
+            )
             continue
         preferred = max(eligible, key=preference)
         collapsed_versions += max(0, len(selected) - 1)
@@ -1004,10 +1058,13 @@ def command_shortlist(args: argparse.Namespace) -> None:
     maximum = args.max_papers if args.max_papers is not None else int(target.get("max", 100))
     if minimum < 1 or maximum < minimum:
         raise SeedingError("Invalid shortlist target.")
+    atomic_write_json(vault / "state" / "access-gaps.json", access_gaps)
     if not args.allow_outside_target and not minimum <= len(shortlist) <= maximum:
         raise SeedingError(
             f"Shortlist contains {len(shortlist)} unique papers; required range is "
-            f"{minimum}–{maximum}. Adjust decisions or pass --allow-outside-target explicitly."
+            f"{minimum}–{maximum}. {len(access_gaps)} selected papers lack a content "
+            "route and are recorded in state/access-gaps.json. Adjust decisions, supply "
+            "lawful full text, or pass --allow-outside-target explicitly."
         )
     atomic_write_json(vault / "state" / "shortlist.json", shortlist)
     atomic_write_json(vault / "state" / "queue.json", [])
@@ -1021,11 +1078,16 @@ def command_shortlist(args: argparse.Namespace) -> None:
             "outside_target_allowed": bool(args.allow_outside_target),
             "collapsed_selected_versions": collapsed_versions,
             "selected_ids": [item.get("openalex_id") for item in shortlist],
+            "selected_access_gap_count": len(access_gaps),
         },
     )
     print(f"Wrote {len(shortlist)} unique papers to {vault / 'state' / 'shortlist.json'}")
     print("Final queue cleared; acquisition must validate at least one PDF or XML per paper.")
     print(f"Collapsed duplicate selected versions: {collapsed_versions}")
+    print(
+        f"Selected papers without a content route: {len(access_gaps)} "
+        f"(recorded in {vault / 'state' / 'access-gaps.json'})"
+    )
 
 
 def add_api_options(parser: argparse.ArgumentParser) -> None:
@@ -1038,7 +1100,7 @@ def add_api_options(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Search OpenAlex and build a content-qualified research shortlist."
+        description="Search OpenAlex and build an auditable research shortlist."
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -1051,7 +1113,7 @@ def build_parser() -> argparse.ArgumentParser:
     phrase.set_defaults(handler=command_set_core_phrase)
 
     search = commands.add_parser(
-        "search", help="Run availability-qualified PDF/XML OpenAlex searches."
+        "search", help="Run content-qualified or access-independent OpenAlex searches."
     )
     search.add_argument("vault", type=Path)
     query_group = search.add_mutually_exclusive_group(required=True)
@@ -1067,6 +1129,15 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--filter", help="Additional comma-separated OpenAlex filters.")
     search.add_argument("--from-year", type=int)
     search.add_argument("--sort", choices=("relevance", "newest", "cited"), default="relevance")
+    search.add_argument(
+        "--access-policy",
+        choices=("content-qualified", "comprehensive"),
+        default="content-qualified",
+        help=(
+            "Use content-qualified for an immediately downloadable exploratory set; "
+            "use comprehensive to discover records regardless of current full-text access."
+        ),
+    )
     add_api_options(search)
     search.set_defaults(handler=command_search)
 
@@ -1080,6 +1151,11 @@ def build_parser() -> argparse.ArgumentParser:
     expand.add_argument("--no-references", action="store_true")
     expand.add_argument("--recent-citing", type=optional_count, default=20)
     expand.add_argument("--from-year", type=int)
+    expand.add_argument(
+        "--access-policy",
+        choices=("content-qualified", "comprehensive"),
+        default="content-qualified",
+    )
     add_api_options(expand)
     expand.set_defaults(handler=command_expand_anchor)
 

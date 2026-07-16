@@ -1,5 +1,6 @@
 .research-vault/
 *.part
+state/wiki-index.jsonl
 
 # Downloaded papers should not be committed or redistributed with the vault.
 raw/
