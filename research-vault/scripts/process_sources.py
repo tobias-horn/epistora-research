@@ -18,6 +18,7 @@ import sys
 PYTHON_VERSION = "3.12"
 PACKAGES = ("docling==2.111.0", "lxml==6.1.1")
 MANIFEST_VERSION = 1
+SENSITIVE_ENVIRONMENT_KEYS = ("OPEN_ALEX", "OPENALEX_API_KEY")
 
 
 class ProcessError(RuntimeError):
@@ -56,6 +57,12 @@ def lock_hash() -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def bootstrap_python() -> str:
+    if (3, 10) <= sys.version_info[:2] < (3, 15):
+        return sys.executable
+    return PYTHON_VERSION
+
+
 def load_manifest(path: Path) -> dict[str, object]:
     if not path.is_file():
         return {}
@@ -68,15 +75,25 @@ def load_manifest(path: Path) -> dict[str, object]:
 
 def cache_environment(cache: Path) -> dict[str, str]:
     environment = os.environ.copy()
+    runtime_root = cache.parent
     mappings = {
         "XDG_CACHE_HOME": cache / "xdg",
         "HF_HOME": cache / "huggingface",
         "TORCH_HOME": cache / "torch",
         "DOCLING_CACHE_DIR": cache / "docling",
+        "PIP_CACHE_DIR": cache / "pip",
+        "UV_CACHE_DIR": cache / "uv",
+        "UV_PYTHON_INSTALL_DIR": runtime_root / "python",
+        "UV_PYTHON_BIN_DIR": runtime_root / "python-bin",
     }
     for key, path in mappings.items():
         path.mkdir(parents=True, exist_ok=True)
         environment[key] = str(path)
+    for key in SENSITIVE_ENVIRONMENT_KEYS:
+        environment.pop(key, None)
+    environment["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["UV_NO_CONFIG"] = "1"
     environment.setdefault("TOKENIZERS_PARALLELISM", "false")
     return environment
 
@@ -96,18 +113,23 @@ def healthy(python: Path, cache: Path) -> bool:
 
 def install_runtime(vault: Path) -> tuple[Path, dict[str, str]]:
     environment, python, cache, manifest_path = runtime_paths(vault)
+    runtime_environment = cache_environment(cache)
     manifest = load_manifest(manifest_path)
     if manifest.get("lock_sha256") == lock_hash() and healthy(python, cache):
-        return python, cache_environment(cache)
+        return python, runtime_environment
 
     environment.parent.mkdir(parents=True, exist_ok=True)
     uv = shutil.which("uv")
     if uv:
         if not python.is_file():
-            subprocess.run([uv, "venv", "--python", PYTHON_VERSION, str(environment)], check=True)
+            subprocess.run(
+                [uv, "venv", "--python", bootstrap_python(), str(environment)],
+                env=runtime_environment,
+                check=True,
+            )
         subprocess.run(
             [uv, "pip", "install", "--python", str(python), *PACKAGES],
-            env=cache_environment(cache),
+            env=runtime_environment,
             check=True,
         )
         installer = "uv"
@@ -118,10 +140,14 @@ def install_runtime(vault: Path) -> tuple[Path, dict[str, str]]:
                 "virtual environment can be created."
             )
         if not python.is_file():
-            subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(environment)],
+                env=runtime_environment,
+                check=True,
+            )
         subprocess.run(
             [str(python), "-m", "pip", "install", *PACKAGES],
-            env=cache_environment(cache),
+            env=runtime_environment,
             check=True,
         )
         installer = "venv+pip"
@@ -137,7 +163,7 @@ def install_runtime(vault: Path) -> tuple[Path, dict[str, str]]:
                 "print(version('docling')); print(lxml.__version__)"
             ),
         ],
-        env=cache_environment(cache),
+        env=runtime_environment,
         check=True,
         capture_output=True,
         text=True,
@@ -149,6 +175,9 @@ def install_runtime(vault: Path) -> tuple[Path, dict[str, str]]:
         "installer": installer,
         "environment": str(environment.relative_to(vault)),
         "cache": str(cache.relative_to(vault)),
+        "uv_python_install_dir": str(
+            (environment.parent / "python").relative_to(vault)
+        ),
         "platform": platform.platform(),
         "resolved": {"docling": versions[0], "lxml": versions[1]},
     }
@@ -156,7 +185,7 @@ def install_runtime(vault: Path) -> tuple[Path, dict[str, str]]:
     temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     temporary.replace(manifest_path)
     print(f"Installed the vault-local parser environment in {environment}")
-    return python, cache_environment(cache)
+    return python, runtime_environment
 
 
 def process(vault: Path, force: bool) -> None:

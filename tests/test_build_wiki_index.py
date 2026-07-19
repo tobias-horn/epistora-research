@@ -24,6 +24,8 @@ title: Paper A
 aliases: []
 openalex_id: W1
 study_id: study-a
+concepts: ["[[Appropriate reliance]]"]
+facets: [human-ai-interaction]
 ---
 # Paper A
 
@@ -44,6 +46,7 @@ type: wiki
 wiki_id: appropriate-reliance
 title: Appropriate reliance
 aliases: []
+facets: [human-ai-interaction]
 kind: concept
 status: developed
 description: Matching reliance to whether advice is correct.
@@ -90,6 +93,10 @@ class WikiIndexTests(unittest.TestCase):
             )
             self.assertEqual(proposition["id"], "p-appropriate-reliance-01")
             self.assertEqual(proposition["evidence"][0]["claim_id"], "c-w1-01")
+            self.assertEqual(proposition["facets"], ["human-ai-interaction"])
+            claim = next(item for item in index if item["record_type"] == "source-claim")
+            self.assertEqual(claim["evidence_type"], "primary-result")
+            self.assertEqual(claim["facets"], ["human-ai-interaction"])
 
     def test_dotted_titles_are_not_mistaken_for_file_extensions(self) -> None:
         self.assertEqual(

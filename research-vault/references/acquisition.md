@@ -51,7 +51,7 @@ Finalize when 80–100 shortlisted papers have at least one retained artifact:
 python3 <vault>/scripts/acquire_openalex.py finalize <vault>
 ```
 
-If fewer than 80 qualify, return to seeding, add targeted replacements, rebuild the shortlist, and refresh the acquisition plan. Do not retain metadata-only papers in the final queue. Use `--allow-outside-target` only when the topic genuinely has fewer accessible relevant sources and record the reason in `state/research.md`.
+If fewer than 80 qualify for a baseline campaign, return to seeding, add targeted replacements, rebuild the shortlist, and refresh the acquisition plan. Do not retain metadata-only papers in the final queue. Use `--allow-outside-target` only when the campaign genuinely warrants a smaller accessible set and record the reason in `state/topic.md`.
 
 Downloaded files retain their original copyright. License and open-access fields are provenance, not additional permission.
 

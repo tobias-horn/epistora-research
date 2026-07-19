@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -27,12 +28,24 @@ class VaultInitializationTests(unittest.TestCase):
             INITIALIZER.initialize_vault(target, "A test research topic", assets)
 
             self.assertTrue((target / "WIKI.md").is_file())
+            self.assertTrue((target / "state" / "topic.md").is_file())
+            self.assertFalse((target / "state" / "research.md").exists())
             self.assertTrue((target / "scripts" / "build_wiki_index.py").is_file())
             self.assertEqual((target / "state" / "access-gaps.json").read_text(), "[]\n")
             self.assertIn("wiki_id:", (target / "templates" / "wiki-entry.md").read_text())
+            self.assertIn("facets: []", (target / "templates" / "source-note.md").read_text())
+            self.assertNotIn(
+                "vault question", (target / "templates" / "source-note.md").read_text()
+            )
             self.assertIn(
                 "state/wiki-index.jsonl", (target / ".gitignore").read_text()
             )
+            self.assertIn(".env\n", (target / ".gitignore").read_text())
+            candidates = json.loads(
+                (target / "state" / "candidates.json").read_text()
+            )
+            self.assertEqual(candidates["active_campaign"], "baseline")
+            self.assertIn("baseline", candidates["campaigns"])
 
 
 if __name__ == "__main__":

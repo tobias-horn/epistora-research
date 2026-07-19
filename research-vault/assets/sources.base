@@ -23,6 +23,8 @@ properties:
     displayName: Study
   concepts:
     displayName: Concepts
+  facets:
+    displayName: Facets
   is_retracted:
     displayName: Retracted
 
@@ -38,4 +40,5 @@ views:
       - note.study_design
       - note.study_id
       - note.concepts
+      - note.facets
       - note.is_retracted

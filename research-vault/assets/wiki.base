@@ -15,6 +15,8 @@ properties:
     displayName: Status
   description:
     displayName: Description
+  facets:
+    displayName: Facets
   sources:
     displayName: Sources
   file.mtime:
@@ -28,5 +30,6 @@ views:
       - note.kind
       - note.status
       - note.description
+      - note.facets
       - note.sources
       - file.mtime

@@ -32,6 +32,8 @@ AVAILABILITY_FILTERS = {
     "external-pdf": "open_access.is_oa:true",
 }
 LABELS = {"unreviewed", "core", "supporting", "contextual", "exclude", "uncertain"}
+CAMPAIGN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+DEFAULT_CAMPAIGN = "baseline"
 TYPE_PRIORITY = {
     "article": 8,
     "review": 8,
@@ -95,7 +97,7 @@ def append_log(path: Path, entry: dict[str, object]) -> None:
 def normalize_vault(raw: Path) -> Path:
     vault = Path(os.path.abspath(raw.expanduser()))
     required = (
-        vault / "state" / "research.md",
+        vault / "state" / "topic.md",
         vault / "state" / "candidates.json",
         vault / "state" / "queue.json",
     )
@@ -110,7 +112,53 @@ def load_state(vault: Path) -> dict[str, object]:
         raise SeedingError("state/candidates.json has an unsupported schema.")
     if not isinstance(value.get("works"), dict):
         raise SeedingError("state/candidates.json must contain a works object.")
+    ensure_campaigns(value)
     return value
+
+
+def ensure_campaigns(state: dict[str, object]) -> None:
+    campaigns = state.get("campaigns")
+    if not isinstance(campaigns, dict):
+        campaigns = {}
+        state["campaigns"] = campaigns
+    if DEFAULT_CAMPAIGN not in campaigns:
+        campaigns[DEFAULT_CAMPAIGN] = {
+            "name": "Baseline topic map",
+            "purpose": "Establish broad initial coverage of the topic charter.",
+            "created_at": state.get("created_at") or utc_now(),
+            "core_phrase": state.get("core_phrase")
+            if isinstance(state.get("core_phrase"), dict)
+            else None,
+        }
+    active = state.get("active_campaign")
+    if not isinstance(active, str) or active not in campaigns:
+        state["active_campaign"] = DEFAULT_CAMPAIGN
+
+
+def resolve_campaign(state: dict[str, object], requested: str | None = None) -> tuple[str, dict[str, object]]:
+    campaigns = state.get("campaigns")
+    assert isinstance(campaigns, dict)
+    campaign_id = requested or str(state.get("active_campaign") or DEFAULT_CAMPAIGN)
+    campaign = campaigns.get(campaign_id)
+    if not isinstance(campaign, dict):
+        raise SeedingError(
+            f"Unknown campaign '{campaign_id}'. Create or select it with the campaign command."
+        )
+    return campaign_id, campaign
+
+
+def campaign_for_args(args: argparse.Namespace, state: dict[str, object]) -> tuple[str, dict[str, object]]:
+    return resolve_campaign(state, getattr(args, "campaign", None))
+
+
+def discovered_in_campaign(candidate: dict[str, object], campaign_id: str) -> bool:
+    discoveries = [
+        item for item in candidate.get("discovered_by") or [] if isinstance(item, dict)
+    ]
+    tagged = [item for item in discoveries if isinstance(item.get("campaign"), str)]
+    if not tagged:
+        return True
+    return any(item.get("campaign") == campaign_id for item in tagged)
 
 
 def load_env_file(path: Path) -> None:
@@ -403,14 +451,60 @@ def print_result_preview(results: list[dict[str, object]], limit: int = 10) -> N
         )
 
 
+def command_campaign(args: argparse.Namespace) -> None:
+    vault = normalize_vault(args.vault)
+    state = load_state(vault)
+    campaign_id = args.id.strip().casefold()
+    if not CAMPAIGN_ID.fullmatch(campaign_id):
+        raise SeedingError(
+            "Campaign ID must use lowercase letters, numbers, and hyphens (maximum 64 characters)."
+        )
+    campaigns = state["campaigns"]
+    assert isinstance(campaigns, dict)
+    existing = campaigns.get(campaign_id)
+    created = not isinstance(existing, dict)
+    if created:
+        purpose = (args.purpose or "").strip()
+        if not purpose:
+            raise SeedingError("A new campaign requires --purpose.")
+        existing = {
+            "name": (args.name or campaign_id).strip(),
+            "purpose": purpose,
+            "created_at": utc_now(),
+            "core_phrase": None,
+        }
+        campaigns[campaign_id] = existing
+    else:
+        if args.name:
+            existing["name"] = args.name.strip()
+        if args.purpose:
+            existing["purpose"] = args.purpose.strip()
+    state["active_campaign"] = campaign_id
+    state["updated_at"] = utc_now()
+    atomic_write_json(vault / "state" / "candidates.json", state)
+    append_log(
+        vault / "state" / "search-log.jsonl",
+        {
+            "event": "campaign-created" if created else "campaign-selected",
+            "campaign": campaign_id,
+            "name": existing.get("name"),
+            "purpose": existing.get("purpose"),
+            "executed_at": utc_now(),
+        },
+    )
+    action = "Created and selected" if created else "Selected"
+    print(f"{action} campaign: {campaign_id}")
+
+
 def command_set_core_phrase(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
+    campaign_id, campaign = campaign_for_args(args, state)
     phrase = args.phrase.strip()
     rationale = args.rationale.strip()
     if not phrase or not rationale:
         raise SeedingError("Core phrase and rationale must not be empty.")
-    state["core_phrase"] = {
+    campaign["core_phrase"] = {
         "value": phrase,
         "rationale": rationale,
         "set_at": utc_now(),
@@ -421,18 +515,21 @@ def command_set_core_phrase(args: argparse.Namespace) -> None:
         vault / "state" / "search-log.jsonl",
         {
             "event": "core-phrase",
+            "campaign": campaign_id,
             "executed_at": utc_now(),
             "phrase": phrase,
             "rationale": rationale,
         },
     )
-    print(f"Core phrase set to: {phrase}")
+    print(f"Core phrase for {campaign_id} set to: {phrase}")
 
 
-def resolve_search_query(args: argparse.Namespace, state: dict[str, object]) -> tuple[str, str | None]:
+def resolve_search_query(
+    args: argparse.Namespace, campaign: dict[str, object]
+) -> tuple[str, str | None]:
     if args.operator is None:
         return args.query, None
-    configured = state.get("core_phrase")
+    configured = campaign.get("core_phrase")
     if not isinstance(configured, dict) or not isinstance(configured.get("value"), str):
         raise SeedingError("Set the core phrase before running an operator-based strand search.")
     core_phrase = configured["value"].strip()
@@ -445,6 +542,7 @@ def resolve_search_query(args: argparse.Namespace, state: dict[str, object]) -> 
 def command_search(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
+    campaign_id, campaign = campaign_for_args(args, state)
     works_before = state["works"]
     assert isinstance(works_before, dict)
     record_count_before = len(works_before)
@@ -452,7 +550,7 @@ def command_search(args: argparse.Namespace) -> None:
         {str(candidate.get("version_key")) for candidate in works_before.values() if isinstance(candidate, dict)}
     )
     api_key = resolve_api_key(vault, args.env_file)
-    query, core_phrase = resolve_search_query(args, state)
+    query, core_phrase = resolve_search_query(args, campaign)
     search_id = make_search_id(args.stage, query + args.strand + utc_now())
     started = time.perf_counter()
     responses: dict[str, object] = {}
@@ -530,6 +628,7 @@ def command_search(args: argparse.Namespace) -> None:
                 raw_work,
                 {
                     "search_id": search_id,
+                    "campaign": campaign_id,
                     "stage": args.stage,
                     "strand": args.strand,
                     "rank": sighting["rank"],
@@ -547,6 +646,7 @@ def command_search(args: argparse.Namespace) -> None:
     new_groups = group_count_after - group_count_before
     atomic_write_json(vault / "state" / "candidates.json", state)
     request_data = {
+        "campaign": campaign_id,
         "query": query,
         "filters": filters,
         "per_page_per_lane": args.per_page,
@@ -559,6 +659,7 @@ def command_search(args: argparse.Namespace) -> None:
         {
             "event": "search",
             "search_id": search_id,
+            "campaign": campaign_id,
             "stage": args.stage,
             "strand": args.strand,
             "rationale": args.rationale,
@@ -580,7 +681,7 @@ def command_search(args: argparse.Namespace) -> None:
             "raw_file": str(saved.relative_to(vault)),
         },
     )
-    print(f"Search ID: {search_id}")
+    print(f"Campaign: {campaign_id}; search ID: {search_id}")
     print(
         f"OpenAlex matches by lane: {totals}; qualified returned by lane: "
         f"{returned_by_lane}; unique returned: {len(identifiers)}"
@@ -600,6 +701,7 @@ def batch(values: list[str], size: int) -> list[list[str]]:
 def command_expand_anchor(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
+    campaign_id, _campaign = campaign_for_args(args, state)
     works_before = state["works"]
     assert isinstance(works_before, dict)
     record_count_before = len(works_before)
@@ -637,6 +739,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
                             raw_work,
                             {
                                 "search_id": search_id,
+                                "campaign": campaign_id,
                                 "stage": "anchor-reference",
                                 "strand": args.strand,
                                 "rank": (chunk_number - 1) * 100 + rank,
@@ -667,6 +770,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
                         raw_work,
                         {
                             "search_id": search_id,
+                            "campaign": campaign_id,
                             "stage": "recent-citing",
                             "strand": args.strand,
                             "rank": rank,
@@ -682,6 +786,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
             anchor,
             {
                 "search_id": search_id,
+                "campaign": campaign_id,
                 "stage": "anchor",
                 "strand": args.strand,
                 "rank": 1,
@@ -699,6 +804,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
         search_id,
         {
             "operation": "expand-anchor",
+            "campaign": campaign_id,
             "anchor_id": anchor_url,
             "references": not args.no_references,
             "recent_citing": args.recent_citing,
@@ -712,6 +818,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
         {
             "event": "anchor-expansion",
             "search_id": search_id,
+            "campaign": campaign_id,
             "stage": "anchor-expansion",
             "strand": args.strand,
             "rationale": args.rationale,
@@ -727,7 +834,7 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
             "raw_file": str(saved.relative_to(vault)),
         },
     )
-    print(f"Expanded anchor: {anchor.get('display_name')} ({anchor_short})")
+    print(f"Campaign: {campaign_id}; expanded anchor: {anchor.get('display_name')} ({anchor_short})")
     print(f"References merged: {len(set(merged))}; recent citing merged: {len(set(recent_ids))}")
     print(f"Candidate total: {len(state['works'])}; raw response: {saved}")
 
@@ -735,11 +842,14 @@ def command_expand_anchor(args: argparse.Namespace) -> None:
 def command_review(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
+    campaign_id, _campaign = campaign_for_args(args, state)
     works = state["works"]
     assert isinstance(works, dict)
     rows = []
     for identifier, candidate in works.items():
         if not isinstance(candidate, dict):
+            continue
+        if not discovered_in_campaign(candidate, campaign_id):
             continue
         screening = candidate.get("screening") if isinstance(candidate.get("screening"), dict) else {}
         if args.label != "any" and screening.get("label", "unreviewed") != args.label:
@@ -788,7 +898,10 @@ def command_review(args: argparse.Namespace) -> None:
             abstract = str(row["abstract"])
             print(f"- Abstract: {abstract[: args.abstract_chars]}{'…' if len(abstract) > args.abstract_chars else ''}")
         print()
-    print(f"Showing {len(selected)} of {len(rows)} matching candidates.")
+    print(
+        f"Showing {len(selected)} of {len(rows)} matching candidates "
+        f"in campaign {campaign_id}."
+    )
 
 
 def clean_string_list(value: object, field: str) -> list[str]:
@@ -802,6 +915,7 @@ def clean_string_list(value: object, field: str) -> list[str]:
 def command_apply_decisions(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
+    campaign_id, _campaign = campaign_for_args(args, state)
     value = load_json(args.decisions)
     decisions = value.get("decisions") if isinstance(value, dict) else value
     if not isinstance(decisions, list):
@@ -817,6 +931,10 @@ def command_apply_decisions(args: argparse.Namespace) -> None:
         candidate = works.get(identifier)
         if not isinstance(candidate, dict):
             raise SeedingError(f"Decision references an unknown candidate: {identifier}")
+        if not discovered_in_campaign(candidate, campaign_id):
+            raise SeedingError(
+                f"Decision references a candidate outside campaign {campaign_id}: {identifier}"
+            )
         screening = candidate.get("screening")
         if not isinstance(screening, dict):
             screening = {}
@@ -862,18 +980,23 @@ def command_apply_decisions(args: argparse.Namespace) -> None:
         vault / "state" / "search-log.jsonl",
         {
             "event": "screening-decisions",
+            "campaign": campaign_id,
             "executed_at": utc_now(),
             "decision_count": changed,
             "decisions": applied,
         },
     )
-    print(f"Applied {changed} decisions.")
+    print(f"Applied {changed} decisions in campaign {campaign_id}.")
 
 
-def grouped_candidates(works: dict[str, object]) -> dict[str, list[dict[str, object]]]:
+def grouped_candidates(
+    works: dict[str, object], campaign_id: str | None = None
+) -> dict[str, list[dict[str, object]]]:
     groups: dict[str, list[dict[str, object]]] = defaultdict(list)
     for identifier, candidate in works.items():
-        if isinstance(candidate, dict):
+        if isinstance(candidate, dict) and (
+            campaign_id is None or discovered_in_campaign(candidate, campaign_id)
+        ):
             candidate = {**candidate, "_id": identifier}
             groups[str(candidate.get("version_key") or identifier)].append(candidate)
     return groups
@@ -882,6 +1005,7 @@ def grouped_candidates(works: dict[str, object]) -> dict[str, list[dict[str, obj
 def command_status(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
+    campaign_id, campaign = campaign_for_args(args, state)
     works = state["works"]
     assert isinstance(works, dict)
     labels = Counter()
@@ -889,6 +1013,8 @@ def command_status(args: argparse.Namespace) -> None:
     abstracts = pdfs = xmls = selected_records = inaccessible_records = 0
     for candidate in works.values():
         if not isinstance(candidate, dict):
+            continue
+        if not discovered_in_campaign(candidate, campaign_id):
             continue
         screening = candidate.get("screening") if isinstance(candidate.get("screening"), dict) else {}
         labels[str(screening.get("label") or "unreviewed")] += 1
@@ -899,9 +1025,11 @@ def command_status(args: argparse.Namespace) -> None:
         xmls += int(bool(metadata.get("has_xml")))
         inaccessible_records += int(not bool(metadata.get("available_content")))
         for discovery in candidate.get("discovered_by") or []:
-            if isinstance(discovery, dict):
+            if isinstance(discovery, dict) and (
+                discovery.get("campaign") in {None, campaign_id}
+            ):
                 stages[str(discovery.get("stage") or "unknown")] += 1
-    groups = grouped_candidates(works)
+    groups = grouped_candidates(works, campaign_id)
     selected_groups = sum(
         any(bool(candidate.get("selected")) for candidate in members)
         for members in groups.values()
@@ -920,8 +1048,15 @@ def command_status(args: argparse.Namespace) -> None:
     )
     summary = {
         "topic": state.get("topic"),
+        "campaign": campaign_id,
+        "campaign_name": campaign.get("name"),
+        "campaign_purpose": campaign.get("purpose"),
         "target": state.get("target"),
-        "candidate_records": len(works),
+        "candidate_records": sum(
+            isinstance(candidate, dict)
+            and discovered_in_campaign(candidate, campaign_id)
+            for candidate in works.values()
+        ),
         "unique_version_groups": len(groups),
         "selected_records": selected_records,
         "selected_unique_papers": selected_groups,
@@ -931,17 +1066,21 @@ def command_status(args: argparse.Namespace) -> None:
         "xmls_reported": xmls,
         "candidate_records_without_content_route": inaccessible_records,
         "selected_unique_papers_without_content_route": selected_access_gap_groups,
-        "core_phrase": state.get("core_phrase"),
+        "core_phrase": campaign.get("core_phrase"),
         "discovery_occurrences_by_stage": dict(sorted(stages.items())),
     }
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return
     print(f"Topic: {summary['topic']}")
-    print(f"Candidates: {len(works)} records / {len(groups)} version groups")
+    print(f"Campaign: {campaign_id} ({campaign.get('name')})")
+    print(
+        f"Candidates: {summary['candidate_records']} records / "
+        f"{len(groups)} version groups"
+    )
     print(f"Selected: {selected_groups} unique papers (target {state['target']['min']}–{state['target']['max']})")
     print(f"Labels: {dict(sorted(labels.items()))}")
-    core_phrase = state.get("core_phrase")
+    core_phrase = campaign.get("core_phrase")
     if isinstance(core_phrase, dict):
         print(f"Core phrase: {core_phrase.get('value')}")
     else:
@@ -969,12 +1108,13 @@ def preference(candidate: dict[str, object]) -> tuple[object, ...]:
 def command_shortlist(args: argparse.Namespace) -> None:
     vault = normalize_vault(args.vault)
     state = load_state(vault)
+    campaign_id, _campaign = campaign_for_args(args, state)
     works = state["works"]
     assert isinstance(works, dict)
     shortlist = []
     access_gaps = []
     collapsed_versions = 0
-    for members in grouped_candidates(works).values():
+    for members in grouped_candidates(works, campaign_id).values():
         selected = [
             candidate
             for candidate in members
@@ -993,6 +1133,7 @@ def command_shortlist(args: argparse.Namespace) -> None:
         if not eligible:
             access_gaps.append(
                 {
+                    "campaign": campaign_id,
                     "version_key": selected[0].get("version_key"),
                     "selected_ids": [str(candidate.get("_id")) for candidate in selected],
                     "title": (
@@ -1044,6 +1185,7 @@ def command_shortlist(args: argparse.Namespace) -> None:
         shortlist.append(
             {
                 **metadata,
+                "campaign": campaign_id,
                 "roles": roles,
                 "selection_reason": " ".join(reasons),
                 "terms": terms,
@@ -1072,6 +1214,7 @@ def command_shortlist(args: argparse.Namespace) -> None:
         vault / "state" / "search-log.jsonl",
         {
             "event": "shortlist",
+            "campaign": campaign_id,
             "executed_at": utc_now(),
             "paper_count": len(shortlist),
             "target": {"min": minimum, "max": maximum},
@@ -1081,7 +1224,10 @@ def command_shortlist(args: argparse.Namespace) -> None:
             "selected_access_gap_count": len(access_gaps),
         },
     )
-    print(f"Wrote {len(shortlist)} unique papers to {vault / 'state' / 'shortlist.json'}")
+    print(
+        f"Wrote {len(shortlist)} unique papers from campaign {campaign_id} "
+        f"to {vault / 'state' / 'shortlist.json'}"
+    )
     print("Final queue cleared; acquisition must validate at least one PDF or XML per paper.")
     print(f"Collapsed duplicate selected versions: {collapsed_versions}")
     print(
@@ -1098,11 +1244,27 @@ def add_api_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_campaign_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--campaign",
+        help="Campaign ID; defaults to the active campaign.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Search OpenAlex and build an auditable research shortlist."
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    campaign = commands.add_parser(
+        "campaign", help="Create or select a discovery campaign."
+    )
+    campaign.add_argument("vault", type=Path)
+    campaign.add_argument("--id", required=True)
+    campaign.add_argument("--name")
+    campaign.add_argument("--purpose")
+    campaign.set_defaults(handler=command_campaign)
 
     phrase = commands.add_parser(
         "set-core-phrase", help="Record the field term used to construct strand searches."
@@ -1110,6 +1272,7 @@ def build_parser() -> argparse.ArgumentParser:
     phrase.add_argument("vault", type=Path)
     phrase.add_argument("--phrase", required=True)
     phrase.add_argument("--rationale", required=True)
+    add_campaign_option(phrase)
     phrase.set_defaults(handler=command_set_core_phrase)
 
     search = commands.add_parser(
@@ -1138,6 +1301,7 @@ def build_parser() -> argparse.ArgumentParser:
             "use comprehensive to discover records regardless of current full-text access."
         ),
     )
+    add_campaign_option(search)
     add_api_options(search)
     search.set_defaults(handler=command_search)
 
@@ -1156,6 +1320,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("content-qualified", "comprehensive"),
         default="content-qualified",
     )
+    add_campaign_option(expand)
     add_api_options(expand)
     expand.set_defaults(handler=command_expand_anchor)
 
@@ -1167,6 +1332,7 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--offset", type=int, default=0)
     review.add_argument("--abstract-chars", type=int, default=700)
     review.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    add_campaign_option(review)
     review.set_defaults(handler=command_review)
 
     decisions = commands.add_parser(
@@ -1174,11 +1340,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     decisions.add_argument("vault", type=Path)
     decisions.add_argument("decisions", type=Path)
+    add_campaign_option(decisions)
     decisions.set_defaults(handler=command_apply_decisions)
 
     status = commands.add_parser("status", help="Report seeding progress and coverage counts.")
     status.add_argument("vault", type=Path)
     status.add_argument("--json", action="store_true")
+    add_campaign_option(status)
     status.set_defaults(handler=command_status)
 
     shortlist = commands.add_parser(
@@ -1188,6 +1356,7 @@ def build_parser() -> argparse.ArgumentParser:
     shortlist.add_argument("--min-papers", type=int)
     shortlist.add_argument("--max-papers", type=int)
     shortlist.add_argument("--allow-outside-target", action="store_true")
+    add_campaign_option(shortlist)
     shortlist.set_defaults(handler=command_shortlist)
     return parser
 

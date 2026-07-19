@@ -265,10 +265,14 @@ def inspect_vault(vault: Path) -> tuple[list[dict[str, object]], dict[str, objec
                         "record_type": "source-claim",
                         "id": identifier,
                         "page": record["relative"],
+                        "title": properties.get("title") or "",
                         "study_id": properties.get("study_id") or None,
+                        "concepts": list_values(properties, "concepts"),
+                        "facets": list_values(properties, "facets"),
                         "claim": claim_text,
                         "scope": values.get("scope and conditions", ""),
                         "locator": values.get("locator", ""),
+                        "evidence_type": values.get("evidence type", ""),
                     }
                 )
         else:
@@ -346,6 +350,10 @@ def inspect_vault(vault: Path) -> tuple[list[dict[str, object]], dict[str, objec
                         "id": identifier,
                         "page": record["relative"],
                         "wiki_id": wiki_id,
+                        "title": properties.get("title") or "",
+                        "aliases": list_values(properties, "aliases"),
+                        "facets": list_values(properties, "facets"),
+                        "kind": properties.get("kind") or "",
                         "statement": statement,
                         "evidence_pattern": values.get("evidence pattern", ""),
                         "assessment": values.get("assessment", ""),

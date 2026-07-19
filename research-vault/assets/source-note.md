@@ -14,6 +14,7 @@ is_retracted: false
 study_id:
 openalex_topics: []
 concepts: []
+facets: []
 related_sources: []
 ---
 
@@ -26,9 +27,9 @@ related_sources: []
 
 {{Explain why this source is relevant to the vault and what it contributes beyond established background knowledge.}}
 
-## Research frame
+## Source frame
 
-- **Question or problem:**
+- **Subject or problem:**
 - **Contribution:**
 - **Study or argument type:**
 - **Context, population, or data:**
@@ -63,7 +64,7 @@ related_sources: []
 ### Vault assessment
 
 - **Design or bias concerns:**
-- **Directness to the vault question:**
+- **Relevance to the topic:**
 - **Precision or information size:**
 - **Independence concerns:** {{Shared sample, dataset, author group, or prior report.}}
 - **What would change the interpretation:**

@@ -2,5 +2,10 @@
 *.part
 state/wiki-index.jsonl
 
+# Credentials belong in the user-level research-vault configuration, never here.
+.env
+.env.*
+!.env.example
+
 # Downloaded papers should not be committed or redistributed with the vault.
 raw/

@@ -23,7 +23,7 @@ Begin wiki synthesis only after:
 - acquisition has been finalized;
 - parsing has completed and every failure or `review_required` record has been handled;
 - reports in the current synthesis batch have source notes with claim blocks, locators, scopes, and study links;
-- the research frame states the intended question, exclusions, and evidence mode;
+- the topic charter states the scope, included facets, and exclusions;
 - known duplicate reports, versions, retractions, and corrections have been resolved or explicitly flagged.
 
 Do not rebuild the wiki after every paper. Complete source notes in coherent batches—normally 10–20 reports or one completed search strand—then synthesize across the batch. Batch size is a workflow heuristic, not an evidential threshold.
@@ -47,7 +47,7 @@ Record structured quantitative extractions separately when the intended task is 
 
 ## 2. Normalize terms without erasing distinctions
 
-Build a provisional concept list from source claims, author terminology, search strands, and expected questions. For each candidate, record:
+Build a provisional concept list from source claims, author terminology, search strands, and the topic charter. For each candidate, record:
 
 - preferred label;
 - aliases and historical terms;
@@ -57,6 +57,8 @@ Build a provisional concept list from source claims, author terminology, search 
 - collisions where one label denotes different constructs.
 
 Use aliases only for genuine alternate labels. Create separate pages when the same word denotes distinct constructs. Use `distinguished-from` to make the distinction explicit. The controlled relation approach is compatible with the concept-label and broader/narrower mapping principles in the [SKOS reference](https://www.w3.org/TR/skos-reference/), but the vault remains ordinary Markdown rather than an ontology.
+
+Use the flat `facets` property sparingly on source and wiki notes, choosing only labels declared in the topic charter that materially improve retrieval.
 
 ## 3. Decide whether a page should exist
 
@@ -85,7 +87,7 @@ A good page should pass all of these tests:
 2. Its propositions share a coherent scope and source neighborhood.
 3. Contradictory evidence can be added without changing the subject.
 4. It can be linked by a typed sentence from another page.
-5. A likely research question would retrieve this page rather than a whole paper.
+5. A later investigation can retrieve this page rather than a whole paper.
 
 Split a page when its propositions need different populations, mechanisms, evidence standards, or update schedules. Merge pages when their definitions, aliases, and supporting claim sets substantially overlap. Typical mature pages are 300–900 words with one to five propositions; this is a readability target, not a hard limit.
 
@@ -168,7 +170,7 @@ The first command validates without writing. The second writes the derived `stat
 
 The validator checks the source notes and wiki pages that exist. It does not prove that all parsed reports have notes, that the knowledge layer is non-empty, or that every source-note batch has been synthesized. Assess those conditions separately before declaring the full vault complete.
 
-The index is a retrieval aid, not an independent evidence store. An agent may query it to locate candidate propositions and source claims, but must open the Markdown blocks to inspect full context before making a consequential claim.
+The index is a retrieval aid, not an independent evidence store. It includes the note's facets and concepts alongside claim scope and evidence type, and wiki aliases, kind, and facets alongside propositions. An agent may query it to locate candidate propositions and source claims, but must open the Markdown blocks to inspect full context before making a consequential claim.
 
 ## 9. Audit the completed batch
 
@@ -180,12 +182,12 @@ After every synthesis batch:
 - inspect propositions with only one study or one research group;
 - search for unrepresented null, negative, and contradictory claims;
 - confirm `sources` properties match claim citations;
-- rebuild the index and rerun fixed competency questions;
+- rebuild the index and inspect the declared topic-coverage gaps;
 - update the human-facing index or map of content.
 
 Use withheld-source tests periodically: build the wiki without a relevant source, add it later, and measure whether the correct propositions update while unrelated pages remain unchanged. This tests belief revision rather than one-time prose generation.
 
-Before calling the full vault complete, reconcile the finalized queue with parsed Markdown, successfully parsed OpenAlex IDs with source-note `openalex_id` values, and completed source-note batches with wiki synthesis passes. Confirm that access gaps remain explicit and that the fixed competency questions are answerable or clearly unresolved.
+Before calling a processing cycle complete, reconcile the finalized queue with parsed Markdown, successfully parsed OpenAlex IDs with source-note `openalex_id` values, and completed source-note batches with wiki synthesis passes. Confirm that access gaps and known topic-coverage gaps remain explicit.
 
 ## Downstream analytical layers
 

@@ -45,7 +45,7 @@ REQUIRED_FILES = (
     "WIKI.md",
     "sources.base",
     "wiki.base",
-    "state/research.md",
+    "state/topic.md",
     "state/candidates.json",
     "state/acquisition.json",
     "state/parsing.json",
@@ -70,7 +70,7 @@ class InitializationError(RuntimeError):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Initialize an Obsidian research vault for a scientific topic."
+        description="Initialize an Obsidian research vault for a scholarly topic."
     )
     parser.add_argument(
         "target",
@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--topic",
         required=True,
-        help="Scientific research topic recorded in state/research.md.",
+        help="Research topic recorded in state/topic.md.",
     )
     return parser.parse_args()
 
@@ -108,17 +108,17 @@ def normalize_target(raw_target: Path) -> Path:
 
 
 def validate_assets(assets_dir: Path) -> None:
-    required = (*ASSET_FILES, "research.md.template")
+    required = (*ASSET_FILES, "topic.md.template")
     missing = [name for name in required if not (assets_dir / name).is_file()]
     if missing:
         raise InitializationError(
             "The skill installation is missing required assets: " + ", ".join(missing)
         )
 
-    template = (assets_dir / "research.md.template").read_text(encoding="utf-8")
+    template = (assets_dir / "topic.md.template").read_text(encoding="utf-8")
     if template.count("{{TOPIC}}") != 1 or template.count("{{TOPIC_YAML}}") != 1:
         raise InitializationError(
-            "research.md.template must contain exactly one {{TOPIC}} placeholder "
+            "topic.md.template must contain exactly one {{TOPIC}} placeholder "
             "and one {{TOPIC_YAML}} placeholder."
         )
 
@@ -156,7 +156,7 @@ def validate_assets(assets_dir: Path) -> None:
         )
 
 
-def render_research(template: str, topic: str) -> str:
+def render_topic(template: str, topic: str) -> str:
     replacements = {
         "TOPIC": topic,
         "TOPIC_YAML": json.dumps(topic, ensure_ascii=False),
@@ -179,11 +179,11 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         assets_dir.parent / "references" / "wiki-building.md", vault / "WIKI.md"
     )
 
-    research_template = (assets_dir / "research.md.template").read_text(
+    topic_template = (assets_dir / "topic.md.template").read_text(
         encoding="utf-8"
     )
-    (vault / "state" / "research.md").write_text(
-        render_research(research_template, topic),
+    (vault / "state" / "topic.md").write_text(
+        render_topic(topic_template, topic),
         encoding="utf-8",
     )
     shutil.copyfile(assets_dir / "queue.json", vault / "state" / "queue.json")
@@ -201,6 +201,15 @@ def populate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
                 "target": {"min": 80, "max": 100},
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": None,
+                "active_campaign": "baseline",
+                "campaigns": {
+                    "baseline": {
+                        "name": "Baseline topic map",
+                        "purpose": "Establish broad initial coverage of the topic charter.",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "core_phrase": None,
+                    }
+                },
                 "works": {},
             },
             ensure_ascii=False,
@@ -274,10 +283,10 @@ def validate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
             details.append("files: " + ", ".join(missing_files))
         raise InitializationError("Vault validation failed; missing " + "; ".join(details))
 
-    research_text = (vault / "state" / "research.md").read_text(encoding="utf-8")
-    research_template = (assets_dir / "research.md.template").read_text(encoding="utf-8")
-    if research_text != render_research(research_template, topic):
-        raise InitializationError("The research topic was not rendered correctly.")
+    topic_text = (vault / "state" / "topic.md").read_text(encoding="utf-8")
+    topic_template = (assets_dir / "topic.md.template").read_text(encoding="utf-8")
+    if topic_text != render_topic(topic_template, topic):
+        raise InitializationError("The topic charter was not rendered correctly.")
 
     try:
         queue = json.loads((vault / "state" / "queue.json").read_text(encoding="utf-8"))
@@ -323,6 +332,13 @@ def validate_vault(vault: Path, assets_dir: Path, topic: str) -> None:
         raise InitializationError("state/candidates.json was not initialized correctly.")
     if candidates.get("works") != {}:
         raise InitializationError("state/candidates.json must start without works.")
+    campaigns = candidates.get("campaigns")
+    if (
+        candidates.get("active_campaign") != "baseline"
+        or not isinstance(campaigns, dict)
+        or "baseline" not in campaigns
+    ):
+        raise InitializationError("state/candidates.json must start with a baseline campaign.")
     if (vault / "state" / "search-log.jsonl").read_text(encoding="utf-8"):
         raise InitializationError("state/search-log.jsonl must start empty.")
 

@@ -10,7 +10,7 @@ From the initialized vault, run:
 python3 scripts/process_sources.py .
 ```
 
-This creates `.research-vault/parser-env`, installs the tested Docling and lxml versions, isolates model caches under `.research-vault/cache`, and processes the finalized queue. The local runtime is ignored by Git. The first PDF can take longer because Docling downloads its models. Use `--force` only to rebuild unchanged Markdown.
+This creates `.research-vault/parser-env`, installs the tested Docling and lxml versions, and processes the finalized queue. It reuses the invoking Python when it is a supported 3.10–3.14 build; if `uv` must download Python, that runtime remains under `.research-vault/`. Package caches and Docling models are likewise vault-local, and OpenAlex credentials are removed from the parser subprocess environment. The local runtime is ignored by Git. The first PDF can take longer because Docling downloads its models. Use `--force` only to rebuild unchanged Markdown.
 
 ## Storage contract
 

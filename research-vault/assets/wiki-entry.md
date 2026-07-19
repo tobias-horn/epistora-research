@@ -3,6 +3,7 @@ type: wiki
 wiki_id:
 title:
 aliases: []
+facets: []
 kind:
 status: developing
 description:

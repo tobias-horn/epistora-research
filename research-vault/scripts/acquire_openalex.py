@@ -66,7 +66,7 @@ def load_json(path: Path) -> object:
 
 def normalize_vault(raw: Path) -> Path:
     vault = Path(os.path.abspath(raw.expanduser()))
-    required = (vault / "state" / "research.md", vault / "state" / "shortlist.json")
+    required = (vault / "state" / "topic.md", vault / "state" / "shortlist.json")
     if not vault.is_dir() or any(not path.is_file() for path in required):
         raise AcquisitionError(f"Not an initialized research vault: {vault}")
     return vault

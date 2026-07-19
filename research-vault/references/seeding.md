@@ -1,14 +1,25 @@
 # Initial OpenAlex seeding
 
-Build an auditable candidate universe before downloading papers. For an exploratory vault, aim for roughly 80–100 retained full-text sources when that is enough to cover the competency questions. For systematic or living evidence work, protocol-defined eligibility and sensitivity take precedence over a source-count target.
+Build an auditable candidate set for one discovery campaign before downloading papers. For an exploratory baseline campaign, aim for roughly 80–100 retained full-text sources when that is enough to cover the declared topic facets. For systematic or living evidence work, protocol-defined eligibility and sensitivity take precedence over a source-count target.
 
-Use agent judgment for topic interpretation, terminology, relevance, strands, anchors, balance, and stopping. Use `scripts/seed_openalex.py` for OpenAlex requests, availability filtering, logging, candidate state, decisions, version grouping, and shortlist creation.
+Use agent judgment for topic interpretation, campaign purpose, terminology, relevance, strands, anchors, balance, and stopping. Use `scripts/seed_openalex.py` for campaign records, OpenAlex requests, availability filtering, logging, candidate state, decisions, version grouping, and shortlist creation.
 
 Never ask for or put an API key in chat, a command argument, a log, or the vault. The script checks `OPEN_ALEX`, `OPENALEX_API_KEY`, local `.env` files, and `${XDG_CONFIG_HOME:-~/.config}/research-vault/.env`. If missing, tell the user to run `python3 <vault>/scripts/configure_openalex.py` in their own terminal and resume after confirmation.
 
-## 1. Frame the topic
+## 1. Bound the topic and choose a campaign
 
-Update `state/research.md` with the evidence mode, intended question, competency questions, breadth, important mechanisms or outcomes, counterevidence worth seeking, and justified exclusions. Treat this as provisional search guidance.
+Update `state/topic.md` with a concise scope, included facets, relevant contexts, evidence or source types, justified exclusions, terminology, alternative perspectives, and known gaps. The charter is a revisable boundary for the knowledge base, not a fixed research question.
+
+Every vault starts with an active `baseline` campaign. Use it for the initial topic map. For a later, distinct discovery pass, create and select a small named campaign:
+
+```bash
+python3 <vault>/scripts/seed_openalex.py campaign <vault> \
+  --id recent-methods \
+  --name "Recent methods" \
+  --purpose "Extend coverage of methods published since the baseline campaign"
+```
+
+Search, anchor expansion, review, screening, status, core-phrase, and shortlist commands default to the active campaign. Pass `--campaign <id>` only when operating on another existing campaign explicitly. The shortlist and queue represent the current acquisition batch; accumulated source notes and wiki pages remain in `sources/` and `wiki/` across campaigns.
 
 Choose the access policy explicitly:
 
@@ -44,7 +55,7 @@ python3 <vault>/scripts/seed_openalex.py set-core-phrase <vault> \
   --rationale "This is the recurring term used by directly relevant recent and review papers."
 ```
 
-Also record the phrase in `state/research.md`.
+Also record the preferred terminology in `state/topic.md`. The exact core phrase and rationale are stored with the campaign in `state/candidates.json`.
 
 ## 3. Build focused strands
 
@@ -69,7 +80,7 @@ The script also requires the core phrase in the title or abstract for strand sea
 
 Start frontier coverage with roughly the last five years and adjust when the field moves unusually quickly or slowly. Keep relevance ranking for normal searches. Use newest-first only for a tightly scoped recent strand.
 
-Retain a strand when it finds new relevant studies or fills a competency-question, design, population, temporal, or counterevidence gap. Reformulate or retire it when screened precision is persistently poor. Stop repeating near-equivalent queries when marginal relevant yield is low and pairwise overlap is high; log both the new-study yield and the reason the remaining gaps are acceptable.
+Retain a strand when it finds new relevant studies or fills a topic-facet, design, population, place, temporal, source-type, or counterevidence gap. Reformulate or retire it when screened precision is persistently poor. Stop repeating near-equivalent queries when marginal relevant yield is low and pairwise overlap is high; log both the new-study yield and the reason the remaining gaps are acceptable.
 
 ## 4. Screen candidates
 
@@ -128,9 +139,9 @@ The script retains only references and citing works with a PDF or XML route. An 
 
 ## 6. Balance and shortlist
 
-Define minimum coverage constraints from the research frame rather than using a universal weighted score or fixed literature quotas. Inspect at least:
+Define minimum coverage constraints from the topic charter and campaign purpose rather than using a universal weighted score or fixed literature quotas. Inspect at least:
 
-- every competency question and search strand;
+- every declared topic facet and campaign search strand;
 - primary studies, syntheses, methods, foundations, frontier work, and critical/counterevidence where relevant;
 - study-design, population, setting, outcome, and disciplinary diversity;
 - author, institution, venue, and topic concentration;
@@ -138,9 +149,9 @@ Define minimum coverage constraints from the research frame rather than using a 
 - duplicate versions, reports of one study, shared datasets, and overlapping samples;
 - accessible versus selected-but-inaccessible evidence.
 
-Adapt the balance to the evidence ecology. A mature intervention question may need older primary trials and risk-of-bias material; a fast technical topic may need recent preprints; a conceptual question may rely more on foundational and critical work. Prefer a published version when available, but retain an accessible preprint or working-paper version when it is the only lawful full text and record the version relationship.
+Adapt the balance to the evidence ecology. A mature intervention topic may need older primary trials and risk-of-bias material; a fast technical topic may need recent preprints; a conceptual topic may rely more on foundational and critical work. Prefer a published version when available, but retain an accessible preprint or working-paper version when it is the only lawful full text and record the version relationship.
 
-For exploratory work, stop when the competency questions and declared constraints are covered and two successive refinements produce little unique relevant work. Do not pad the set to reach 80–100. For systematic work, use a protocol-defined search and screening stopping rule; search saturation alone does not establish recall. Check progress with:
+For exploratory work, stop when the campaign's declared facets and constraints are adequately covered and two successive refinements produce little unique relevant work. Do not pad the set to reach 80–100. For systematic work, use a protocol-defined search and screening stopping rule; search saturation alone does not establish recall. Check progress with:
 
 ```bash
 python3 <vault>/scripts/seed_openalex.py status <vault>
@@ -152,13 +163,13 @@ Then write the acquisition shortlist:
 python3 <vault>/scripts/seed_openalex.py shortlist <vault>
 ```
 
-This writes `state/shortlist.json` and clears `state/queue.json`. The final queue is created only after acquisition validates at least one PDF or XML per paper.
+This writes the active campaign's selected works to `state/shortlist.json` and clears `state/queue.json`. The final queue is created only after acquisition validates at least one PDF or XML per paper.
 
 The command also writes `state/access-gaps.json`. In comprehensive mode, this file is part of the evidence audit: inaccessible studies remain relevant to the assessment even though they cannot enter the parsing queue until a lawful full text is supplied.
 
 ## Audit expectations
 
-Preserve exact queries, availability lanes, filters, sort, rationale, timestamps, result counts, candidate IDs, the chosen core phrase, screening decisions, version relationships, coverage, and stopping rationale. Use `state/search-log.jsonl` for the machine trail and `state/research.md` for the concise human-readable strategy.
+Preserve the campaign ID, exact queries, availability lanes, filters, sort, rationale, timestamps, result counts, candidate IDs, chosen core phrase, screening decisions, version relationships, coverage, and stopping rationale. Use `state/search-log.jsonl` for the machine trail and `state/topic.md` for the concise human-readable topic boundary and coverage summary.
 
 ## Handoff
 

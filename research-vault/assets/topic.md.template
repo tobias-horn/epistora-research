@@ -1,0 +1,32 @@
+---
+topic: {{TOPIC_YAML}}
+status: initialized
+---
+
+# Topic: {{TOPIC}}
+
+## Topic charter
+
+Define a useful boundary for the vault before seeding. Keep it broad enough to support different later uses and revise it when the topic develops.
+
+- **Scope:**
+- **Included facets:**
+- **Contexts:** <!-- People or populations, places or settings, time periods, systems, traditions, or other relevant boundaries. -->
+- **Evidence and source types:**
+- **Exclusions:**
+
+## Terminology
+
+- **Terms tested:**
+- **Preferred terms:**
+- **Aliases and historical terms:**
+- **Known terminology collisions:**
+
+## Coverage
+
+- **Facets covered:**
+- **Known gaps:**
+- **Required counterevidence or alternative perspectives:**
+- **Last evidence review:**
+
+Campaign definitions and core phrases live in `state/candidates.json`. `state/search-log.jsonl` records exact OpenAlex operations, `state/shortlist.json` holds the current campaign's acquisition set, and `state/access-gaps.json` records selected works without a current content route. `sources/` and `wiki/` remain the accumulated knowledge base across campaigns.
